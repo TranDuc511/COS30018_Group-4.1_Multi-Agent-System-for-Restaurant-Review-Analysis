@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReviewRecord(BaseModel):
@@ -43,8 +43,8 @@ class AnalysisOutput(BaseModel):
 class Pattern(BaseModel):
     description: str
     aspect: str
-    frequency: float          # proportion of reviews mentioning this aspect negatively
-    evidence_review_ids: list[str]
+    frequency: float = Field(ge=0.0, le=1.0)
+    evidence_review_ids: list[str] = Field(min_length=1)
 
 
 class RootCause(BaseModel):

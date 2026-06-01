@@ -67,21 +67,29 @@ class BaseAgent(ABC):
         initial_messages: list[dict],
         schema_model: type[BaseModel],
         original_task: str,
-    ) -> tuple[dict | None, str | None, int]:
-        """Returns (result, error, attempts_made). attempts_made is 1-indexed."""
+    ) -> tuple[dict | None, str | None, str | None, int]:
+        """Returns (result, error_detail, error_type, attempts_made)."""
         messages = list(initial_messages)
         last_raw: str | None = None
         last_error: str | None = None
+        last_error_type: str | None = None
         attempt = 0
 
         for attempt in range(self.MAX_RETRIES + 1):
-            last_raw = self._call_llm(messages)
+            try:
+                last_raw = self._call_llm(messages)
+            except Exception as exc:
+                last_error = str(exc)
+                last_error_type = "api_error"
+                logger.error("LLM API call failed on attempt %d: %s", attempt, last_error)
+                break
             try:
                 parsed = json.loads(last_raw)
                 validated = schema_model.model_validate(parsed)
-                return validated.model_dump(), None, attempt
+                return validated.model_dump(), None, None, attempt
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = str(exc)
+                last_error_type = "schema_validation_error"
                 if attempt < self.MAX_RETRIES:
                     correction = _CORRECTION_PROMPT.format(
                         original_task=original_task,
@@ -93,7 +101,7 @@ class BaseAgent(ABC):
                     messages.append({"role": "assistant", "content": last_raw})
                     messages.append({"role": "user", "content": correction})
 
-        return None, last_error, attempt
+        return None, last_error, last_error_type, attempt
 
     @abstractmethod
     def run(self, input_data: dict) -> dict:

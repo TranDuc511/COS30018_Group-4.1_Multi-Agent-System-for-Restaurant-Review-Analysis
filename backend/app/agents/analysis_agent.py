@@ -28,17 +28,17 @@ class AnalysisAgent(BaseAgent):
             {"role": "user", "content": original_task},
         ]
 
-        result, error, attempts = self._run_with_retry(messages, AnalysisOutput, original_task)
+        result, error, error_type, attempts = self._run_with_retry(messages, AnalysisOutput, original_task)
 
         if result is not None:
             return result
 
         return AgentError(
             agent="analysis_agent",
-            error_type="schema_validation_error",
+            error_type=error_type or "unknown_error",
             error_detail=error or "Unknown error",
             retry_count=attempts,
-            recoverable=True,
+            recoverable=False,
         ).model_dump()
 
 

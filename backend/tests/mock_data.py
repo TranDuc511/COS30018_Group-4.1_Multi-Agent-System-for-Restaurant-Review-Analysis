@@ -116,3 +116,31 @@ MOCK_REASONING_OUTPUT = {
 MOCK_INVALID_LLM_OUTPUT = {
     "wrong_field": "this does not match any schema",
 }
+
+MOCK_REASONING_OUTPUT_FREQUENCY_OUT_OF_RANGE = {
+    "patterns": [
+        {
+            "description": "Long wait times reported consistently",
+            "aspect": "wait_time",
+            "frequency": 1.5,
+            "evidence_review_ids": ["abc123"],
+        }
+    ],
+    "root_causes": [],
+    "status": "success",
+    "error_detail": None,
+}
+
+MOCK_REASONING_OUTPUT_EMPTY_EVIDENCE = {
+    "patterns": [
+        {
+            "description": "Long wait times reported consistently",
+            "aspect": "wait_time",
+            "frequency": 0.8,
+            "evidence_review_ids": [],
+        }
+    ],
+    "root_causes": [],
+    "status": "success",
+    "error_detail": None,
+}

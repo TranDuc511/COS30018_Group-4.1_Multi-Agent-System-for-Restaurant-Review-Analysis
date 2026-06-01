@@ -12,6 +12,8 @@ from tests.mock_data import (
     MOCK_INVALID_LLM_OUTPUT,
     MOCK_REASONING_INPUT,
     MOCK_REASONING_OUTPUT,
+    MOCK_REASONING_OUTPUT_EMPTY_EVIDENCE,
+    MOCK_REASONING_OUTPUT_FREQUENCY_OUT_OF_RANGE,
     MOCK_REVIEW,
     MOCK_REVIEW_POSITIVE,
 )
@@ -84,6 +86,22 @@ class TestAnalysisAgent:
         AgentError.model_validate(result)
 
 
+    @patch(PATCH_TARGET)
+    def test_api_exception_returns_agent_error(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = Exception("connection timeout")
+
+        result = analyse_review(MOCK_REVIEW)
+
+        assert result["status"] == "error"
+        assert result["agent"] == "analysis_agent"
+        assert result["error_type"] == "api_error"
+        assert result["recoverable"] is False  # agent exhausted all options
+        assert "connection timeout" in result["error_detail"]
+        AgentError.model_validate(result)
+
+
 # ── Reasoning Agent ───────────────────────────────────────────────────────────
 
 class TestReasoningAgent:
@@ -144,3 +162,35 @@ class TestReasoningAgent:
         assert result["retry_count"] == ReasoningAgent.MAX_RETRIES
         assert mock_client.chat.completions.create.call_count == ReasoningAgent.MAX_RETRIES + 1
         AgentError.model_validate(result)
+
+    @patch(PATCH_TARGET)
+    def test_frequency_out_of_range_triggers_correction(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = [
+            make_llm_response(MOCK_REASONING_OUTPUT_FREQUENCY_OUT_OF_RANGE),
+            make_llm_response(MOCK_REASONING_OUTPUT),
+        ]
+
+        result = ReasoningAgent().run(MOCK_REASONING_INPUT)
+
+        assert result["status"] == "success"
+        assert mock_client.chat.completions.create.call_count == 2
+        for pattern in result["patterns"]:
+            assert 0.0 <= pattern["frequency"] <= 1.0
+
+    @patch(PATCH_TARGET)
+    def test_empty_evidence_review_ids_triggers_correction(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = [
+            make_llm_response(MOCK_REASONING_OUTPUT_EMPTY_EVIDENCE),
+            make_llm_response(MOCK_REASONING_OUTPUT),
+        ]
+
+        result = ReasoningAgent().run(MOCK_REASONING_INPUT)
+
+        assert result["status"] == "success"
+        assert mock_client.chat.completions.create.call_count == 2
+        for pattern in result["patterns"]:
+            assert len(pattern["evidence_review_ids"]) >= 1
