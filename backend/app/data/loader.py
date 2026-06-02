@@ -10,17 +10,22 @@ BUSINESS_PATH = os.getenv("YELP_BUSINESS_PATH", "backend/data/raw/yelp_academic_
 REVIEW_PATH   = os.getenv("YELP_REVIEW_PATH",   "backend/data/raw/yelp_academic_dataset_review.json")
 MAX_REVIEWS   = int(os.getenv("MAX_REVIEW_SAMPLE", 100))
 
+# Cache — load 1 lần duy nhất
+_businesses_cache = []
 
-def search_business(name: str, top_n: int = 3) -> list[dict]:
-    """Load businesses từ file và fuzzy match với tên nhập vào."""
-    businesses = []
+
+def _load_businesses() -> list[dict]:
+    global _businesses_cache
+    if _businesses_cache:
+        return _businesses_cache
+    print("Loading business dataset...")
     with open(BUSINESS_PATH, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             b = json.loads(line)
-            businesses.append({
+            _businesses_cache.append({
                 "business_id":  b["business_id"],
                 "name":         b["name"],
                 "address":      b.get("address", ""),
@@ -28,7 +33,13 @@ def search_business(name: str, top_n: int = 3) -> list[dict]:
                 "state":        b.get("state", ""),
                 "review_count": b.get("review_count", 0),
             })
+    print(f"Loaded {len(_businesses_cache)} businesses.")
+    return _businesses_cache
 
+
+def search_business(name: str, top_n: int = 3) -> list[dict]:
+    """Load businesses từ cache và fuzzy match với tên nhập vào."""
+    businesses = _load_businesses()
     return fuzzy_search(name, businesses, top_n)
 
 
