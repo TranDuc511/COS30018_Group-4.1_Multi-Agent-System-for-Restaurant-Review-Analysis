@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReviewRecord(BaseModel):
@@ -18,4 +18,44 @@ class AgentError(BaseModel):
     error_detail: str
     retry_count: int
     recoverable: bool
+
+
+# ── Analysis Agent contracts ──────────────────────────────────────────────────
+
+class AspectLabel(BaseModel):
+    category: Literal[
+        "food_quality", "staff_attitude", "pricing",
+        "wait_time", "ambience", "cleanliness", "other"
+    ]
+    label: Literal["positive", "negative", "neutral"]
+
+
+class AnalysisOutput(BaseModel):
+    review_id: str
+    sentiment: Literal["positive", "negative", "neutral", "mixed"]
+    aspects: list[AspectLabel]
+    status: Literal["success", "error"]
+    error_detail: str | None = None
+
+
+# ── Reasoning Agent contracts ─────────────────────────────────────────────────
+
+class Pattern(BaseModel):
+    description: str
+    aspect: str
+    frequency: float = Field(ge=0.0, le=1.0)
+    evidence_review_ids: list[str] = Field(min_length=1)
+
+
+class RootCause(BaseModel):
+    pattern: str
+    cause: str
+    confidence: Literal["low", "medium", "high"]
+
+
+class ReasoningOutput(BaseModel):
+    patterns: list[Pattern]
+    root_causes: list[RootCause]
+    status: Literal["success", "error"]
+    error_detail: str | None = None
 
