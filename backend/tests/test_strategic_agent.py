@@ -1,7 +1,6 @@
 from app.agents.strategic_agent import (
     _candidate_models,
     _completion_options,
-    _llm_provider,
     generate_recommendations,
 )
 
@@ -97,7 +96,6 @@ def test_generate_recommendations_requires_api_key_for_llm_mode(monkeypatch):
 
 
 def test_candidate_models_use_primary_and_fallback_defaults(monkeypatch):
-    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_FALLBACK_MODEL", raising=False)
 
@@ -105,54 +103,14 @@ def test_candidate_models_use_primary_and_fallback_defaults(monkeypatch):
 
 
 def test_candidate_models_allow_explicit_primary_override(monkeypatch):
-    monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
     monkeypatch.setenv("OPENAI_FALLBACK_MODEL", "gpt-5-mini")
 
     assert _candidate_models() == ["gpt-5", "gpt-5-mini"]
 
 
-def test_candidate_models_support_gemini_defaults(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "gemini")
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
-    monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
-
-    assert _candidate_models() == ["gemini-2.5-flash-lite", "gemini-3.1-flash-lite"]
-
-
-def test_candidate_models_allow_explicit_gemini_override(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "gemini")
-    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
-
-    assert _candidate_models() == ["gemini-3.1-flash-lite", "gemini-2.5-flash"]
-
-
-def test_gemini_completion_options_use_low_reasoning_by_default(monkeypatch):
-    monkeypatch.delenv("GEMINI_REASONING_EFFORT", raising=False)
-
-    assert _completion_options("gemini")["reasoning_effort"] == "low"
-
-
-def test_unknown_provider_is_reported(monkeypatch):
-    monkeypatch.setattr("app.agents.strategic_agent._load_environment", lambda: None)
-    monkeypatch.setenv("LLM_PROVIDER", "unknown")
-
-    assert _llm_provider() == "unknown"
-
-    result = generate_recommendations(
-        {
-            "patterns": [],
-            "root_causes": [
-                {
-                    "pattern": "Repeated wait-time complaints",
-                    "cause": "Possible staffing issue",
-                    "confidence": "high",
-                }
-            ],
-        },
-        use_llm=True,
-    )
-
-    assert result["status"] == "error"
-    assert "Unsupported LLM_PROVIDER" in result["error_detail"]
+def test_completion_options_use_openai_json_mode():
+    assert _completion_options() == {
+        "response_format": {"type": "json_object"},
+        "temperature": 0,
+    }
