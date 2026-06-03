@@ -1,0 +1,148 @@
+# Member 2 — Data Pipeline: Changes & Design Decisions
+
+**Author:** Khánh (Member 2)  
+**Component:** Data Pipeline (`loader.py`, `matching.py`, `preprocessor.py`)  
+**Date:** June 2026
+
+---
+
+## 1. Overview
+
+The original project brief specified a data pipeline responsible for loading the Yelp dataset, performing fuzzy business name matching, and producing a cleaned Pandas DataFrame for downstream agents. This document outlines the implementation decisions made and deviations from the original specification.
+
+---
+
+## 2. Changes from Original Specification
+
+### 2.1 Fuzzy Matching Logic — Extended Result Set for Exact Matches
+
+**Original spec:**  
+> "Fuzzy matching with top-3 candidates returned for user confirmation."
+
+**Implementation:**  
+The system returns a variable number of results depending on match score:
+- If the highest score is **100 (exact match)**: all businesses with score 100 are returned, sorted by `review_count` descending.
+- If the highest score is **below 100**: top 3 candidates are returned, sorted by score then `review_count`.
+
+**Reason:**  
+A restaurant chain such as McDonald's may have dozens of branches in the dataset, all sharing the same name and therefore all scoring 100. Arbitrarily limiting to 3 would hide valid options from the user. Returning all exact matches gives the user full visibility to select the correct branch.
+
+---
+
+### 2.2 Fuzzy Matching Library — Replaced `fuzzywuzzy` with `rapidfuzz`
+
+**Original spec:**  
+`fuzzywuzzy` was listed as the matching library.
+
+**Implementation:**  
+`rapidfuzz` is used instead of `fuzzywuzzy`.
+
+**Reason:**  
+The Yelp business dataset contains approximately 150,000 records. Running `fuzzywuzzy` against the full dataset produced unacceptable load times (~10–15 seconds per query). `rapidfuzz` implements the same Levenshtein-based algorithm in C/C++, producing identical match scores while reducing query time to under 1 second. No accuracy trade-off is involved.
+
+---
+
+### 2.3 Pre-filtering Before Fuzzy Match
+
+**Original spec:**  
+No pre-filtering was specified.
+
+**Implementation:**  
+Before fuzzy matching, the business list is pre-filtered to only include businesses whose name starts with the same first character as the query (case-insensitive). If fewer than 10 candidates remain after filtering, the full list is used as a fallback.
+
+**Reason:**  
+Reduces the fuzzy match candidate pool from ~150,000 to ~5,000–10,000 records, significantly improving response time while maintaining accuracy for standard queries.
+
+---
+
+### 2.4 In-memory Caching of Business Dataset
+
+**Original spec:**  
+No caching was specified.
+
+**Implementation:**  
+The business dataset is loaded from `business.json` once and stored in a module-level `_businesses_cache` list. Subsequent calls to `search_business()` read from the cache rather than re-reading the file.
+
+**Reason:**  
+When deployed as a FastAPI server, multiple users may submit search queries concurrently. Without caching, each query would re-read the full ~150k-record file from disk. The cache ensures the file is read once at server startup and all subsequent queries are served from memory.
+
+---
+
+### 2.5 Additional Business Metadata — `review_count`
+
+**Original spec:**  
+The business record was specified to include: `business_id`, `name`, `city`, `state`.
+
+**Implementation:**  
+`review_count` was added to the business record.
+
+**Reason:**  
+Used as a tiebreaker when multiple branches share the same fuzzy score. Branches with more reviews are ranked higher, as they provide more data for downstream LLM analysis.
+
+`address` was also added to help users distinguish between branches of the same chain.
+
+---
+
+### 2.6 Dual Output Files
+
+**Original spec:**  
+A single preprocessed DataFrame as output.
+
+**Implementation:**  
+Two JSON files are saved to `backend/data/processed/`:
+- `sample_reviews.json` — full 5-column DataFrame (review_id, business_id, stars, text, date)
+- `sample_reviews_text.json` — text-only file containing only the `text` field
+
+**Reason:**  
+The full file is consumed by the Orchestrator and downstream agents that require all metadata. The text-only file is provided as a lightweight input for LLM processing, reducing token overhead when agents only need review content.
+
+---
+
+### 2.7 Review Count Cap
+
+**Original spec:**  
+> "The system caps analysis at the most recent 500 reviews per business by default."
+
+**Implementation:**  
+The cap is set to **100 reviews** via the `MAX_REVIEW_SAMPLE` environment variable in `.env`.
+
+**Reason:**  
+During development and testing, 100 reviews provides sufficient data for the Analysis Agent to identify patterns while keeping LLM API costs and processing time manageable. The cap is configurable via `.env` and can be raised to 500 for production deployment without any code changes.
+
+---
+
+## 3. Architecture — File Responsibilities
+
+| File | Responsibility |
+|---|---|
+| `app/data/matching.py` | Fuzzy search logic, pre-filtering, deduplication, sorting |
+| `app/data/loader.py` | File I/O, business cache, review extraction |
+| `app/data/preprocessor.py` | DataFrame cleaning, schema validation, type enforcement |
+| `tests/test_data_pipeline.py` | End-to-end test with user interaction and file output |
+
+---
+
+## 4. Interface Contract — Output Schema
+
+The preprocessed DataFrame passed to the Orchestrator Agent adheres to the following contract:
+
+| Column | Type | Description |
+|---|---|---|
+| `review_id` | string | Unique review identifier |
+| `business_id` | string | Yelp business identifier |
+| `stars` | int64 (1–5) | Star rating, clipped to valid range |
+| `text` | string | Review comment, stripped of whitespace |
+| `date` | datetime64 | Review date, parsed from string |
+
+This schema is frozen. Any changes require team agreement as downstream agents (Member 3, Member 4) depend on it.
+
+---
+
+## 5. Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `YELP_BUSINESS_PATH` | `backend/data/raw/yelp_academic_dataset_business.json` | Path to business dataset |
+| `YELP_REVIEW_PATH` | `backend/data/raw/yelp_academic_dataset_review.json` | Path to review dataset |
+| `MAX_REVIEW_SAMPLE` | `100` | Maximum reviews to extract per business |
+| `RANDOM_SEED` | `42` | Seed for reproducibility |
