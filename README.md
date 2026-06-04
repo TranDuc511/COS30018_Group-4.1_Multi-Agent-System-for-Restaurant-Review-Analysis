@@ -426,8 +426,8 @@ Draft schema:
   "retry_counts": {
     "analysis_agent": 0,
     "reasoning_agent": 0,
-    "strategic_agent": 0,
-    "report_generator_agent": 0
+    "strategy_agent": 0,
+    "report_agent": 0
   },
   "skipped_agents": [],
   "errors": [],
