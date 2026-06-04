@@ -1,4 +1,4 @@
-from app.agents.report_generator_agent import (
+from app.agents.report_agent import (
     _candidate_models,
     _completion_options,
     generate_report,
@@ -98,7 +98,7 @@ def test_generate_report_returns_error_for_invalid_input():
 
 
 def test_generate_report_requires_api_key_for_llm_mode(monkeypatch):
-    monkeypatch.setattr("app.agents.report_generator_agent._load_environment", lambda: None)
+    monkeypatch.setattr("app.agents.report_agent._load_environment", lambda: None)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     result = generate_report(

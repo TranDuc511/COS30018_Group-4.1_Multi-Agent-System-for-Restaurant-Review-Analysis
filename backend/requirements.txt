@@ -7,4 +7,5 @@ rapidfuzz
 openai
 langchain
 langgraph
-
+fuzzywuzzy 
+python-levenshtein

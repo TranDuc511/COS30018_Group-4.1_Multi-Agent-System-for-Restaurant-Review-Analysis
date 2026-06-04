@@ -3,6 +3,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+AspectCategory = Literal[
+    "food_quality",
+    "staff_attitude",
+    "pricing",
+    "wait_time",
+    "ambience",
+    "cleanliness",
+    "other",
+]
+
+
 class ReviewRecord(BaseModel):
     review_id: str
     business_id: str
@@ -20,25 +31,37 @@ class AgentError(BaseModel):
     recoverable: bool
 
 
+class AspectLabel(BaseModel):
+    category: AspectCategory
+    label: Literal["positive", "negative", "neutral"]
+
+
+class AnalysisOutput(BaseModel):
+    review_id: str
+    sentiment: Literal["positive", "negative", "neutral", "mixed"]
+    aspects: list[AspectLabel]
+    status: Literal["success", "error"]
+    error_detail: str | None = None
+
+
 class Pattern(BaseModel):
     description: str
-    aspect: Literal[
-        "food_quality",
-        "staff_attitude",
-        "pricing",
-        "wait_time",
-        "ambience",
-        "cleanliness",
-        "other",
-    ]
-    frequency: float = Field(ge=0, le=1)
-    evidence_review_ids: list[str] = Field(default_factory=list)
+    aspect: AspectCategory
+    frequency: float = Field(ge=0.0, le=1.0)
+    evidence_review_ids: list[str] = Field(min_length=1)
 
 
 class RootCause(BaseModel):
     pattern: str
     cause: str
     confidence: Literal["low", "medium", "high"]
+
+
+class ReasoningOutput(BaseModel):
+    patterns: list[Pattern]
+    root_causes: list[RootCause]
+    status: Literal["success", "error"]
+    error_detail: str | None = None
 
 
 class StrategicAgentInput(BaseModel):
@@ -79,4 +102,3 @@ class ReportOutput(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     status: Literal["success", "error"]
     error_detail: str | None = None
-

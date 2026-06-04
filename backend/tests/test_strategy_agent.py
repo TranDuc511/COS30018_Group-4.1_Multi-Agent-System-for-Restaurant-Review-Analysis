@@ -1,4 +1,4 @@
-from app.agents.strategic_agent import (
+from app.agents.strategy_agent import (
     _candidate_models,
     _completion_options,
     generate_recommendations,
@@ -73,7 +73,7 @@ def test_generate_recommendations_returns_error_for_invalid_input():
 
 
 def test_generate_recommendations_requires_api_key_for_llm_mode(monkeypatch):
-    monkeypatch.setattr("app.agents.strategic_agent._load_environment", lambda: None)
+    monkeypatch.setattr("app.agents.strategy_agent._load_environment", lambda: None)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     result = generate_recommendations(

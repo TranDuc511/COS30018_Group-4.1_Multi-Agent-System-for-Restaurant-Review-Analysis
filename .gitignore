@@ -42,3 +42,11 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local Claude context
+.claude/
+CLAUDE.md
+
+# Local debug/trace scripts
+backend/trace_agents.py
+backend/trace_agents_live.py
+

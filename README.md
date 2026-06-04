@@ -17,28 +17,40 @@ COS30018-IS/
 ├── backend/
 │   ├── app/
 │   │   ├── agents/
+│   │   │   ├── base_agent.py        
+│   │   │   ├── analysis_agent.py    
+│   │   │   ├── reasoning_agent.py   
+│   │   │   ├── strategy_agent.py    
+│   │   │   └── report_agent.py      
 │   │   ├── core/
+│   │   │   ├── state.py             PipelineState
+│   │   │   ├── graph.py             LangGraph graph
+│   │   │   └── orchestrator.py      error reasoning
 │   │   ├── data/
+│   │   │   ├── loader.py    
+|   |   |   ├── matching.py      
+│   │   │   └── preprocessor.py      
 │   │   ├── schemas/
-│   │   └── main.py
+│   │   │   └── contracts.py         # shared JSON schemas (all agree on this)
+│   │   └── main.py                  # FastAPI app + endpoints
 │   ├── data/
-│   │   ├── raw/
-│   │   └── processed/
+│   │   ├── raw/                     # yelp_academic_dataset_business.json
+│   │   │   └── .gitkeep             # commit placeholder, not the actual files
+│   │   └── processed/               # cached/cleaned outputs
 │   ├── tests/
-│   ├── .env.example
+│   │   ├── test_analysis_agent.py
+│   │   ├── test_orchestrator.py
+│   │   └── mock_data.py             # stub outputs for testing
+│   ├── .env.example                 # OPENAI_API_KEY=, DATA_PATH=
 │   └── requirements.txt
 ├── frontend/
-│   ├── public/
 │   ├── src/
-│   │   ├── api/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── index.html
+│   │   ├── api/                     # axios calls to FastAPI
+│   │   ├── components/              # reusable UI pieces
+│   │   └── pages/
+│   │       └── Dashboard.jsx        # the web report view
 │   └── package.json
-├── .gitignore
-├── AGENTS.md
+├── AGENTS.md                       
 └── README.md
 ```
 
@@ -414,8 +426,8 @@ Draft schema:
   "retry_counts": {
     "analysis_agent": 0,
     "reasoning_agent": 0,
-    "strategic_agent": 0,
-    "report_generator_agent": 0
+    "strategy_agent": 0,
+    "report_agent": 0
   },
   "skipped_agents": [],
   "errors": [],
