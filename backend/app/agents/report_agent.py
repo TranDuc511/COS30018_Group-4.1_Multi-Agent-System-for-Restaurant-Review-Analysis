@@ -1,256 +1,152 @@
+"""Report Generator Agent — builds the final human-readable report.
+
+Supports a deterministic mode (use_llm=False) used by the tests and offline runs,
+and an LLM-backed mode (use_llm=True) that uses the configured OpenAI models.
+"""
+
 import json
 import os
-from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from app.schemas.contracts import (
-    Recommendation,
-    ReportGeneratorInput,
-    ReportOutput,
-    RootCause,
-)
+from app.schemas.contracts import ReportGeneratorInput, ReportOutput
 
+_REPORT_TITLE = "Restaurant Review Analysis Report"
 
-DEFAULT_OPENAI_MODEL = "gpt-5.4"
-DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
-MAX_SELF_CORRECTION_RETRIES = 2
+_BASE_LIMITATIONS = [
+    "Analysis is based on a random sample of up to 100 reviews and may not represent every customer.",
+    "Sentiment and aspect labels are produced automatically and may contain classification errors.",
+]
 
+_SYSTEM_PROMPT = """\
+You are a business analyst writing a concise report for a restaurant owner.
+Given upstream analysis, reasoning, and recommendation outputs, produce a clear report.
 
-def generate_report(report_input: dict, use_llm: bool = True) -> dict:
-    try:
-        validated_input = ReportGeneratorInput.model_validate(report_input)
-    except ValidationError as exc:
-        return _error_output(f"Invalid report generator input: {exc}")
+Return a JSON object with:
+- title: "Restaurant Review Analysis Report"
+- business_name: the restaurant name
+- sample_size: number of reviews analysed
+- executive_summary: a short plain-English summary
+- key_findings: list of the most important findings
+- root_causes: list of likely root causes
+- recommendations: prioritised actions
+- limitations: list of caveats about the analysis
+- status: "success"
+- error_detail: null
 
-    if use_llm:
-        return _generate_report_with_llm(validated_input)
-
-    return _generate_report_deterministically(validated_input)
-
-
-def _generate_report_deterministically(report_input: ReportGeneratorInput) -> dict:
-    root_causes = _root_causes_from_reasoning(report_input.reasoning_summary)
-    key_findings = _key_findings(report_input, root_causes)
-    limitations = _limitations(report_input)
-
-    output = ReportOutput(
-        business_name=report_input.business_name,
-        sample_size=report_input.sample_size,
-        executive_summary=_executive_summary(report_input, key_findings),
-        key_findings=key_findings,
-        root_causes=root_causes,
-        recommendations=report_input.recommendations,
-        limitations=limitations,
-        status="success",
-        error_detail=None,
-    )
-    return _dump_output(output)
-
-
-def _generate_report_with_llm(report_input: ReportGeneratorInput) -> dict:
-    _load_environment()
-    try:
-        from openai import OpenAI
-    except ImportError:
-        return _error_output("The openai package is not installed.")
-
-    client = _llm_client(OpenAI)
-    if isinstance(client, str):
-        return _error_output(client)
-
-    messages = _llm_messages(report_input)
-    last_error = "Unknown validation error."
-
-    for model in _candidate_models():
-        for _ in range(MAX_SELF_CORRECTION_RETRIES + 1):
-            content = ""
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    **_completion_options(),
-                )
-                content = response.choices[0].message.content or "{}"
-                payload = json.loads(content)
-                output = ReportOutput.model_validate(payload)
-                return _dump_output(output)
-            except (json.JSONDecodeError, ValidationError, KeyError, IndexError) as exc:
-                last_error = str(exc)
-                messages.extend(
-                    [
-                        {
-                            "role": "assistant",
-                            "content": content,
-                        },
-                        {
-                            "role": "user",
-                            "content": (
-                                "The previous output failed validation. Return only valid "
-                                "JSON matching the required report schema. Validation error: "
-                                f"{last_error}"
-                            ),
-                        },
-                    ]
-                )
-            except Exception as exc:
-                last_error = str(exc)
-                break
-
-    return _error_output(
-        "Report generator LLM call failed after trying configured models: "
-        f"{last_error}"
-    )
-
-
-def _llm_messages(report_input: ReportGeneratorInput) -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You are the Report Generator Agent for a restaurant review analysis "
-                "system. Produce a concise business-owner report. Return only JSON "
-                "with keys: title, business_name, sample_size, executive_summary, "
-                "key_findings, root_causes, recommendations, limitations, status, "
-                "error_detail. Use status='success' when the report is valid."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(_dump_model(report_input), ensure_ascii=True),
-        },
-    ]
+Return only valid JSON."""
 
 
 def _load_environment() -> None:
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-
-    backend_dir = Path(__file__).resolve().parents[2]
-    load_dotenv(backend_dir / ".env")
     load_dotenv()
 
 
-def _llm_client(openai_client: Any) -> Any:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return "OPENAI_API_KEY is not set."
-    return openai_client(api_key=api_key)
-
-
 def _candidate_models() -> list[str]:
-    primary_model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-    models = [primary_model]
-    fallback_model = os.getenv("OPENAI_FALLBACK_MODEL", DEFAULT_OPENAI_FALLBACK_MODEL)
-    if fallback_model and fallback_model not in models:
-        models.append(fallback_model)
-    return models
+    return [
+        os.getenv("OPENAI_MODEL", "gpt-5.4"),
+        os.getenv("OPENAI_FALLBACK_MODEL", "gpt-5.4-mini"),
+    ]
 
 
 def _completion_options() -> dict[str, Any]:
-    return {
-        "response_format": {"type": "json_object"},
-        "temperature": 0,
-    }
+    return {"response_format": {"type": "json_object"}, "temperature": 0}
 
 
-def _root_causes_from_reasoning(reasoning_summary: dict[str, Any]) -> list[RootCause]:
-    root_causes = reasoning_summary.get("root_causes", [])
-    if not isinstance(root_causes, list):
-        return []
-
-    valid_root_causes = []
-    for root_cause in root_causes:
-        try:
-            valid_root_causes.append(RootCause.model_validate(root_cause))
-        except ValidationError:
-            continue
-    return valid_root_causes
+def _error(detail: str) -> dict:
+    return {"recommendations": [], "status": "error", "error_detail": detail}
 
 
-def _key_findings(
-    report_input: ReportGeneratorInput,
-    root_causes: list[RootCause],
-) -> list[str]:
-    findings = []
-    patterns = report_input.reasoning_summary.get("patterns", [])
-    sentiment_distribution = report_input.analysis_summary.get("sentiment_distribution")
-    top_aspects = report_input.analysis_summary.get("top_aspects")
-
-    if isinstance(sentiment_distribution, dict) and sentiment_distribution:
-        findings.append(
-            "Sentiment distribution: "
-            + ", ".join(f"{key}: {value}" for key, value in sentiment_distribution.items())
-        )
-
-    if isinstance(top_aspects, list) and top_aspects:
-        findings.append("Most discussed aspects: " + ", ".join(map(str, top_aspects[:5])))
-
-    if isinstance(patterns, list):
-        for pattern in patterns[:3]:
-            description = pattern.get("description") if isinstance(pattern, dict) else None
-            if description:
-                findings.append(str(description))
-
-    if root_causes:
-        findings.append(f"Identified {len(root_causes)} likely root cause(s).")
-
-    if report_input.recommendations:
-        findings.append(
-            f"Generated {len(report_input.recommendations)} prioritised recommendation(s)."
-        )
-
-    if not findings:
-        findings.append("No major recurring pattern was provided by upstream agents.")
-
-    return findings
+def _build_key_findings(patterns: list[dict]) -> list[str]:
+    if not patterns:
+        return ["No major recurring pattern was provided by upstream agents."]
+    return [p.get("description", "") for p in patterns if p.get("description")]
 
 
-def _executive_summary(
-    report_input: ReportGeneratorInput,
-    key_findings: list[str],
-) -> str:
-    if report_input.recommendations:
-        top_recommendation = report_input.recommendations[0]
+def _build_executive_summary(business_name: str, sample_size: int, recommendations: list[dict]) -> str:
+    if not recommendations:
         return (
-            f"{report_input.business_name} was analysed using "
-            f"{report_input.sample_size} sampled review(s). The top action is: "
-            f"{top_recommendation.action}"
+            f"This report summarises {sample_size} sampled reviews for {business_name}. "
+            "No prioritised recommendations were produced by the upstream agents."
         )
-
+    actions = "; ".join(r.get("action", "") for r in recommendations if r.get("action"))
     return (
-        f"{report_input.business_name} was analysed using "
-        f"{report_input.sample_size} sampled review(s). "
-        f"{key_findings[0]}"
+        f"Based on {sample_size} sampled reviews for {business_name}, the priority actions are: "
+        f"{actions}"
     )
 
 
-def _limitations(report_input: ReportGeneratorInput) -> list[str]:
-    limitations = [
-        "Findings are based on the selected review sample, not every Yelp review.",
-        "Recommendations should be validated against restaurant operations before action.",
-    ]
-    if report_input.sample_size == 0:
-        limitations.append("No review records were included in the report input.")
+def _build_limitations(sample_size: int) -> list[str]:
+    limitations = list(_BASE_LIMITATIONS)
+    if sample_size == 0:
+        limitations.append(
+            "No review records were available for this restaurant, so the findings are limited."
+        )
     return limitations
 
 
-def _error_output(error_detail: str) -> dict:
-    return _dump_output(
-        ReportOutput(
-            status="error",
-            error_detail=error_detail,
-        )
-    )
+def _deterministic_report(payload: dict) -> dict:
+    business_name = payload.get("business_name", "")
+    sample_size = payload.get("sample_size", 0)
+    reasoning_summary = payload.get("reasoning_summary") or {}
+    recommendations = payload.get("recommendations") or []
+    patterns = reasoning_summary.get("patterns") or []
+    root_causes = reasoning_summary.get("root_causes") or []
+
+    return {
+        "title": _REPORT_TITLE,
+        "business_name": business_name,
+        "sample_size": sample_size,
+        "executive_summary": _build_executive_summary(business_name, sample_size, recommendations),
+        "key_findings": _build_key_findings(patterns),
+        "root_causes": root_causes,
+        "recommendations": recommendations,
+        "limitations": _build_limitations(sample_size),
+        "status": "success",
+        "error_detail": None,
+    }
 
 
-def _dump_output(output: ReportOutput) -> dict:
-    return _dump_model(output)
+def _llm_report(payload: dict) -> dict:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_BASE_URL"))
+    user_prompt = json.dumps(payload, indent=2)
+    last_error: Exception | None = None
+
+    for model in _candidate_models():
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                **_completion_options(),
+            )
+            data = json.loads(response.choices[0].message.content)
+            data.setdefault("title", _REPORT_TITLE)
+            data.setdefault("status", "success")
+            data.setdefault("error_detail", None)
+            validated = ReportOutput.model_validate(data)
+            return validated.model_dump()
+        except Exception as exc:  # noqa: BLE001 - fall through to fallback model
+            last_error = exc
+
+    return _error(f"LLM report generation failed: {last_error}")
 
 
-def _dump_model(model: Any) -> dict:
-    return model.model_dump()
+def generate_report(payload: dict, use_llm: bool = True) -> dict:
+    try:
+        ReportGeneratorInput.model_validate(payload)
+    except ValidationError as exc:
+        return _error(f"Invalid report generator input: {exc}")
 
+    if use_llm:
+        _load_environment()
+        if not os.getenv("OPENAI_API_KEY"):
+            return _error("OPENAI_API_KEY is not set.")
+        return _llm_report(payload)
+
+    return _deterministic_report(payload)

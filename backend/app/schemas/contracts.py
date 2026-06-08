@@ -77,8 +77,8 @@ class Recommendation(BaseModel):
     expected_impact: str
 
 
-class StrategicAgentOutput(BaseModel):
-    recommendations: list[Recommendation] = Field(default_factory=list)
+class StrategyOutput(BaseModel):
+    recommendations: list[Recommendation]
     status: Literal["success", "error"]
     error_detail: str | None = None
 
@@ -93,9 +93,9 @@ class ReportGeneratorInput(BaseModel):
 
 class ReportOutput(BaseModel):
     title: str = "Restaurant Review Analysis Report"
-    business_name: str = ""
-    sample_size: int = Field(default=0, ge=0)
-    executive_summary: str = ""
+    business_name: str
+    sample_size: int = Field(ge=0)
+    executive_summary: str
     key_findings: list[str] = Field(default_factory=list)
     root_causes: list[RootCause] = Field(default_factory=list)
     recommendations: list[Recommendation] = Field(default_factory=list)

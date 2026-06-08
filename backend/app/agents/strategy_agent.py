@@ -1,257 +1,156 @@
+"""Strategic Agent — converts patterns and root causes into prioritised actions.
+
+Supports a deterministic mode (use_llm=False) used by the tests and offline runs,
+and an LLM-backed mode (use_llm=True) that uses the configured OpenAI models.
+"""
+
 import json
 import os
-from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from app.schemas.contracts import (
-    Pattern,
-    Recommendation,
-    RootCause,
-    StrategicAgentInput,
-    StrategicAgentOutput,
-)
+from app.schemas.contracts import StrategicAgentInput, StrategyOutput
 
+_CONFIDENCE_RANK = {"high": 3, "medium": 2, "low": 1}
 
-DEFAULT_OPENAI_MODEL = "gpt-5.4"
-DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-5.4-mini"
-MAX_SELF_CORRECTION_RETRIES = 2
+# Maps a review aspect to the business area a recommendation belongs to.
+_ASPECT_CATEGORY = {
+    "food_quality": "food",
+    "staff_attitude": "service",
+    "pricing": "pricing",
+    "wait_time": "operations",
+    "ambience": "ambience",
+    "cleanliness": "facilities",
+    "other": "general",
+}
 
+_SYSTEM_PROMPT = """\
+You are a restaurant operations strategist. Given recurring review patterns and
+their likely root causes, produce prioritised, concrete business actions.
 
-def generate_recommendations(reasoning_result: dict, use_llm: bool = True) -> dict:
-    try:
-        strategic_input = StrategicAgentInput.model_validate(reasoning_result)
-    except ValidationError as exc:
-        return _error_output(f"Invalid strategic agent input: {exc}")
+Return a JSON object with:
+- recommendations: list ordered most-important first, each with:
+  - priority: integer starting at 1
+  - issue: the underlying problem being addressed
+  - action: a concrete, specific action the owner can take
+  - category: business area (e.g. "operations", "pricing", "service", "food")
+  - expected_impact: the improvement expected from the action
+- status: "success"
+- error_detail: null
 
-    if not strategic_input.root_causes:
-        return _dump_output(
-            StrategicAgentOutput(
-                recommendations=[],
-                status="success",
-                error_detail=None,
-            )
-        )
-
-    if use_llm:
-        return _generate_recommendations_with_llm(strategic_input)
-
-    return _generate_recommendations_deterministically(strategic_input)
-
-
-def _generate_recommendations_deterministically(
-    strategic_input: StrategicAgentInput,
-) -> dict:
-    ranked_root_causes = sorted(
-        strategic_input.root_causes,
-        key=lambda root_cause: _priority_score(root_cause, strategic_input.patterns),
-        reverse=True,
-    )
-
-    recommendations = [
-        Recommendation(
-            priority=index,
-            issue=root_cause.cause,
-            action=_action_for_root_cause(root_cause),
-            category=_category_for_root_cause(root_cause),
-            expected_impact=_expected_impact_for_root_cause(root_cause),
-        )
-        for index, root_cause in enumerate(ranked_root_causes, start=1)
-    ]
-
-    return _dump_output(
-        StrategicAgentOutput(
-            recommendations=recommendations,
-            status="success",
-            error_detail=None,
-        )
-    )
-
-
-def _generate_recommendations_with_llm(strategic_input: StrategicAgentInput) -> dict:
-    _load_environment()
-    try:
-        from openai import OpenAI
-    except ImportError:
-        return _error_output("The openai package is not installed.")
-
-    client = _llm_client(OpenAI)
-    if isinstance(client, str):
-        return _error_output(client)
-
-    messages = _llm_messages(strategic_input)
-    last_error = "Unknown validation error."
-
-    for model in _candidate_models():
-        for _ in range(MAX_SELF_CORRECTION_RETRIES + 1):
-            content = ""
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    **_completion_options(),
-                )
-                content = response.choices[0].message.content or "{}"
-                payload = json.loads(content)
-                output = StrategicAgentOutput.model_validate(payload)
-                return _dump_output(output)
-            except (json.JSONDecodeError, ValidationError, KeyError, IndexError) as exc:
-                last_error = str(exc)
-                messages.extend(
-                    [
-                        {
-                            "role": "assistant",
-                            "content": content,
-                        },
-                        {
-                            "role": "user",
-                            "content": (
-                                "The previous output failed validation. Return only valid "
-                                "JSON matching the required schema. Validation error: "
-                                f"{last_error}"
-                            ),
-                        },
-                    ]
-                )
-            except Exception as exc:
-                last_error = str(exc)
-                break
-
-    return _error_output(
-        "Strategic agent LLM call failed after trying configured models: "
-        f"{last_error}"
-    )
-
-
-def _llm_messages(strategic_input: StrategicAgentInput) -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You are the Strategic Agent for a restaurant review analysis system. "
-                "Convert root causes into prioritized business actions. Return only "
-                "JSON with keys: recommendations, status, error_detail. Every "
-                "recommendation must contain priority, issue, action, category, and "
-                "expected_impact. Use status='success' when recommendations are valid."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(_dump_model(strategic_input), ensure_ascii=True),
-        },
-    ]
+Return only valid JSON."""
 
 
 def _load_environment() -> None:
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-
-    backend_dir = Path(__file__).resolve().parents[2]
-    load_dotenv(backend_dir / ".env")
     load_dotenv()
 
 
-def _llm_client(openai_client: Any) -> Any:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return "OPENAI_API_KEY is not set."
-    return openai_client(api_key=api_key)
-
-
 def _candidate_models() -> list[str]:
-    primary_model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-    models = [primary_model]
-    fallback_model = os.getenv("OPENAI_FALLBACK_MODEL", DEFAULT_OPENAI_FALLBACK_MODEL)
-    if fallback_model and fallback_model not in models:
-        models.append(fallback_model)
-    return models
+    return [
+        os.getenv("OPENAI_MODEL", "gpt-5.4"),
+        os.getenv("OPENAI_FALLBACK_MODEL", "gpt-5.4-mini"),
+    ]
 
 
 def _completion_options() -> dict[str, Any]:
-    return {
-        "response_format": {"type": "json_object"},
-        "temperature": 0,
-    }
+    return {"response_format": {"type": "json_object"}, "temperature": 0}
 
 
-def _priority_score(root_cause: RootCause, patterns: list[Pattern]) -> float:
-    confidence_score = {"high": 3, "medium": 2, "low": 1}[root_cause.confidence]
-    related_frequency = max(
-        (
-            pattern.frequency
-            for pattern in patterns
-            if _same_topic(root_cause.pattern, pattern.description)
-        ),
-        default=0,
-    )
-    return confidence_score + related_frequency
+def _error(detail: str) -> dict:
+    return {"recommendations": [], "status": "error", "error_detail": detail}
 
 
-def _same_topic(root_pattern: str, pattern_description: str) -> bool:
-    left = root_pattern.lower().strip()
-    right = pattern_description.lower().strip()
-    return bool(left and right and (left in right or right in left))
+def _match_pattern(patterns: list[dict], target: str) -> dict | None:
+    for pattern in patterns:
+        if pattern.get("description") == target:
+            return pattern
+    return None
 
 
-def _category_for_root_cause(root_cause: RootCause) -> str:
-    text = f"{root_cause.pattern} {root_cause.cause}".lower()
-    if any(keyword in text for keyword in ["wait", "queue", "table", "turnover"]):
-        return "operations"
-    if any(keyword in text for keyword in ["staff", "service", "rude", "attitude"]):
-        return "service"
-    if any(keyword in text for keyword in ["price", "pricing", "expensive", "value"]):
-        return "pricing"
-    if any(keyword in text for keyword in ["food", "taste", "cold", "portion", "menu"]):
-        return "food_quality"
-    if any(keyword in text for keyword in ["ambience", "noise", "music", "atmosphere"]):
-        return "ambience"
-    if any(keyword in text for keyword in ["clean", "dirty", "hygiene"]):
-        return "cleanliness"
-    return "operations"
-
-
-def _action_for_root_cause(root_cause: RootCause) -> str:
-    category = _category_for_root_cause(root_cause)
-    actions = {
-        "operations": "Review peak-hour staffing, table assignment, and handoff workflows linked to this issue.",
-        "service": "Coach front-of-house staff on service recovery, tone, and escalation for repeated complaint scenarios.",
-        "pricing": "Audit menu pricing, portion value, and customer-facing explanations for items mentioned in complaints.",
-        "food_quality": "Check preparation consistency, holding times, and quality control for the affected menu items.",
-        "ambience": "Review dining-room noise, seating layout, lighting, and atmosphere factors mentioned in reviews.",
-        "cleanliness": "Increase inspection frequency and assign clear ownership for cleanliness checkpoints.",
-    }
-    return actions.get(category, "Investigate the root cause and assign an owner for corrective action.")
-
-
-def _expected_impact_for_root_cause(root_cause: RootCause) -> str:
-    category = _category_for_root_cause(root_cause)
-    impacts = {
-        "operations": "Reduce operational complaints and improve guest throughput.",
-        "service": "Improve perceived service quality and reduce negative staff-related reviews.",
-        "pricing": "Improve value perception and reduce price-related dissatisfaction.",
-        "food_quality": "Improve food consistency and reduce menu-item complaints.",
-        "ambience": "Improve dining experience and reduce environment-related complaints.",
-        "cleanliness": "Reduce cleanliness complaints and protect customer trust.",
-    }
-    return impacts.get(category, "Reduce repeated complaints connected to the identified root cause.")
-
-
-def _error_output(error_detail: str) -> dict:
-    return _dump_output(
-        StrategicAgentOutput(
-            recommendations=[],
-            status="error",
-            error_detail=error_detail,
+def _deterministic_recommendations(patterns: list[dict], root_causes: list[dict]) -> dict:
+    ranked = []
+    for root_cause in root_causes:
+        match = _match_pattern(patterns, root_cause.get("pattern"))
+        aspect = match.get("aspect", "other") if match else "other"
+        frequency = match.get("frequency", 0.0) if match else 0.0
+        ranked.append(
+            {
+                "issue": root_cause.get("cause", ""),
+                "aspect": aspect,
+                "category": _ASPECT_CATEGORY.get(aspect, "general"),
+                "frequency": frequency,
+                "confidence": root_cause.get("confidence", "low"),
+            }
         )
+
+    ranked.sort(
+        key=lambda r: (_CONFIDENCE_RANK.get(r["confidence"], 0), r["frequency"]),
+        reverse=True,
     )
 
+    recommendations = []
+    for priority, item in enumerate(ranked, start=1):
+        aspect_label = item["aspect"].replace("_", " ")
+        recommendations.append(
+            {
+                "priority": priority,
+                "issue": item["issue"],
+                "action": f"Address {aspect_label}: {item['issue']}",
+                "category": item["category"],
+                "expected_impact": f"Reduce {aspect_label} complaints",
+            }
+        )
 
-def _dump_output(output: StrategicAgentOutput) -> dict:
-    return _dump_model(output)
+    return {"recommendations": recommendations, "status": "success", "error_detail": None}
 
 
-def _dump_model(model: Any) -> dict:
-    return model.model_dump()
+def _llm_recommendations(payload: dict) -> dict:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_BASE_URL"))
+    user_prompt = json.dumps(payload, indent=2)
+    last_error: Exception | None = None
+
+    for model in _candidate_models():
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                **_completion_options(),
+            )
+            data = json.loads(response.choices[0].message.content)
+            validated = StrategyOutput.model_validate(
+                {
+                    "recommendations": data.get("recommendations", []),
+                    "status": "success",
+                    "error_detail": None,
+                }
+            )
+            return validated.model_dump()
+        except Exception as exc:  # noqa: BLE001 - fall through to fallback model
+            last_error = exc
+
+    return _error(f"LLM recommendation generation failed: {last_error}")
+
+
+def generate_recommendations(payload: dict, use_llm: bool = True) -> dict:
+    try:
+        StrategicAgentInput.model_validate(payload)
+    except ValidationError as exc:
+        return _error(f"Invalid strategic agent input: {exc}")
+
+    patterns = payload.get("patterns", [])
+    root_causes = payload.get("root_causes", [])
+
+    if use_llm:
+        _load_environment()
+        if not os.getenv("OPENAI_API_KEY"):
+            return _error("OPENAI_API_KEY is not set.")
+        return _llm_recommendations(payload)
+
+    return _deterministic_recommendations(patterns, root_causes)

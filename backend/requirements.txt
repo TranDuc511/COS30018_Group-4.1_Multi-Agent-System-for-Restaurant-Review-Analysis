@@ -9,3 +9,5 @@ langchain
 langgraph
 fuzzywuzzy 
 python-levenshtein
+langchain-openai
+pytest

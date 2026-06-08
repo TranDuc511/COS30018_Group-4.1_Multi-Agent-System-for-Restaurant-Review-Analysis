@@ -16,41 +16,75 @@ without requiring the owner to manually process review text.
 COS30018-IS/
 ├── backend/
 │   ├── app/
+│   │   ├── __init__.py
 │   │   ├── agents/
-│   │   │   ├── base_agent.py        
-│   │   │   ├── analysis_agent.py    
-│   │   │   ├── reasoning_agent.py   
-│   │   │   ├── strategy_agent.py    
-│   │   │   └── report_agent.py      
+│   │   │   ├── __init__.py
+│   │   │   ├── base_agent.py          # shared agent base + self-correction loop
+│   │   │   ├── analysis_agent.py      # per-review sentiment + aspect classification
+│   │   │   ├── reasoning_agent.py     # pattern + root-cause reasoning
+│   │   │   ├── strategy_agent.py      # prioritised recommendations
+│   │   │   └── report_agent.py        # final web report generation
 │   │   ├── core/
-│   │   │   ├── state.py             PipelineState
-│   │   │   ├── graph.py             LangGraph graph
-│   │   │   └── orchestrator.py      error reasoning
+│   │   │   ├── __init__.py
+│   │   │   ├── config.py              # settings / env + model config
+│   │   │   ├── state.py               # PipelineState
+│   │   │   ├── graph.py               # LangGraph graph wiring
+│   │   │   ├── orchestrator.py        # routing, retries, error reasoning
+│   │   │   ├── nodes.py               # real agent node wrappers (shared)
+│   │   │   └── pipeline.py            # build + run the full pipeline
 │   │   ├── data/
-│   │   │   ├── loader.py    
-|   |   |   ├── matching.py      
-│   │   │   └── preprocessor.py      
+│   │   │   ├── __init__.py
+│   │   │   ├── loader.py              # load Yelp dataset
+│   │   │   ├── matching.py            # fuzzy restaurant-name matching
+│   │   │   └── preprocessor.py        # clean + sample reviews
 │   │   ├── schemas/
-│   │   │   └── contracts.py         # shared JSON schemas (all agree on this)
-│   │   └── main.py                  # FastAPI app + endpoints
+│   │   │   ├── __init__.py
+│   │   │   └── contracts.py           # shared JSON schemas (all agree on this)
+│   │   └── main.py                    # FastAPI app + endpoints
 │   ├── data/
-│   │   ├── raw/                     # yelp_academic_dataset_business.json
-│   │   │   └── .gitkeep             # commit placeholder, not the actual files
-│   │   └── processed/               # cached/cleaned outputs
+│   │   ├── raw/                       # yelp_academic_dataset_business.json
+│   │   │   └── .gitkeep               # commit placeholder, not the actual files
+│   │   └── processed/                 # cached/cleaned outputs
+│   │       └── .gitkeep
 │   ├── tests/
+│   │   ├── .gitkeep
+│   │   ├── mock_data.py               # stub data for testing
+│   │   ├── mock_agents.py             # stub agent implementations
 │   │   ├── test_analysis_agent.py
+│   │   ├── test_data_pipeline.py
+│   │   ├── test_e2e_pipeline.py
+│   │   ├── test_graph.py
+│   │   ├── test_integration.py
 │   │   ├── test_orchestrator.py
-│   │   └── mock_data.py             # stub outputs for testing
-│   ├── .env.example                 # OPENAI_API_KEY=, DATA_PATH=
+│   │   ├── test_orchestrator_routing.py
+│   │   ├── test_report_agent.py
+│   │   ├── test_state.py
+│   │   ├── test_strategy_agent.py
+│   │   └── test_unit.py
+│   ├── conftest.py                    # shared pytest fixtures
+│   ├── pytest.ini                     # pytest configuration
+│   ├── run_pipeline.py                # CLI: run the full pipeline on a real restaurant
+│   ├── .env.example                   # OPENAI_API_KEY=, DATA_PATH=
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── api/                     # axios calls to FastAPI
-│   │   ├── components/              # reusable UI pieces
-│   │   └── pages/
-│   │       └── Dashboard.jsx        # the web report view
+│   │   ├── api/
+│   │   │   └── client.js              # API calls to FastAPI
+│   │   ├── components/                # reusable UI pieces (.gitkeep)
+│   │   ├── pages/
+│   │   │   └── Dashboard.jsx          # the web report view
+│   │   ├── App.jsx                    # root React component
+│   │   └── main.jsx                   # React entry point
+│   ├── index.html
 │   └── package.json
-├── AGENTS.md                       
+├── docs/
+│   ├── CLAUDE.md                      # how AI agents should work in this repo
+│   ├── PROGRESS.md                    # living project status
+│   ├── DECISIONS.md                   # decision log
+│   └── RUN_TESTS.md                   # how to run the test suite
+├── AGENTS.md
+├── Member2 changes report.MD
+├── Codebase Review & Integration Report.md
 └── README.md
 ```
 

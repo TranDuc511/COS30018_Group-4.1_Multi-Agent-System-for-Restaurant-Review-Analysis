@@ -151,8 +151,14 @@ def test_fuzzy_sort_by_review_count():
 
 
 def test_fuzzy_top_n():
-    """Trả về đúng số lượng top_n."""
-    results = fuzzy_search("McDonald's", MOCK_BUSINESSES, top_n=2)
+    """top_n caps the result count for NON-exact matches.
+
+    Exact (score==100) matches intentionally return all branches (see
+    Member 2 changes report), so top_n is exercised with a typo query that
+    scores below 100.
+    """
+    results = fuzzy_search("Mcdonald", MOCK_BUSINESSES, top_n=2)
+    assert results[0]["score"] < 100
     assert len(results) == 2
 
 

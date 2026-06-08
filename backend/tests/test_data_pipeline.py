@@ -1,103 +1,123 @@
-import sys
+"""Data pipeline demo + automated test.
+
+`run_demo()` contains the interactive end-to-end flow (search -> select ->
+load -> preprocess -> save). Running this file directly (python -m / python
+tests/test_data_pipeline.py) launches the interactive demo against the real Yelp
+dataset. Under pytest, the demo is exercised non-interactively with mocked data,
+so it never blocks on stdin or requires the dataset files.
+"""
+
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.data.loader import search_business, load_reviews
-from app.data.preprocessor import preprocess
+import pandas as pd
 
-# ================================================
-# Test 1 - Fuzzy Search
-# ================================================
-print("=" * 50)
-print("FUZZY SEARCH")
-print("=" * 50)
+from app.data import loader, preprocessor
 
-business_name = input("Nhập tên restaurant: ")
-results = search_business(business_name)
 
-if not results:
-    print("Không tìm thấy business nào phù hợp.")
-    sys.exit(1)
+def run_demo(output_dir: str | None = None) -> pd.DataFrame | None:
+    if output_dir is None:
+        # <repo>/backend/tests/this_file -> parents[1] == <repo>/backend
+        from pathlib import Path
+        output_dir = str(Path(__file__).resolve().parents[1] / "data" / "processed")
+    business_name = input("Restaurant name: ")
+    results = loader.search_business(business_name)
+    if not results:
+        print("No matching business found.")
+        return None
 
-if results[0]["score"] == 100:
-    print(f"\nTìm thấy {len(results)} chi nhánh khớp chính xác:\n")
-else:
-    print(f"\nKhông tìm thấy khớp chính xác. Top {len(results)} gần nhất:\n")
+    if results[0]["score"] == 100:
+        print(f"\n{len(results)} exact-match branch(es) found:\n")
+    else:
+        print(f"\nNo exact match. Top {len(results)} closest:\n")
 
-for i, r in enumerate(results):
-    print(f"{i+1}. {r['name']}")
-    print(f"   Address  : {r['address']}, {r['city']}, {r['state']}")
-    print(f"   Reviews  : {r['review_count']}")
-    print(f"   Score    : {r['score']}")
-    print(f"   ID       : {r['business_id']}")
-    print()
+    for i, r in enumerate(results):
+        print(f"{i + 1}. {r['name']} — {r['address']}, {r['city']}, {r['state']} "
+              f"(reviews={r['review_count']}, score={r['score']}, id={r['business_id']})")
 
-# User chọn chi nhánh
-while True:
-    try:
-        choice = int(input(f"Chọn chi nhánh (1-{len(results)}): "))
-        if 1 <= choice <= len(results):
-            break
-        print(f"Vui lòng nhập số từ 1 đến {len(results)}.")
-    except ValueError:
-        print("Vui lòng nhập số.")
+    while True:
+        try:
+            choice = int(input(f"\nSelect branch (1-{len(results)}): "))
+            if 1 <= choice <= len(results):
+                break
+            print(f"Please enter a number from 1 to {len(results)}.")
+        except ValueError:
+            print("Please enter a number.")
 
-selected = results[choice - 1]
-business_id = selected["business_id"]
-print(f"\n>> Đã chọn: {selected['name']} - {selected['address']}, {selected['city']}\n")
+    selected = results[choice - 1]
+    print(f"\n>> Selected: {selected['name']} - {selected['address']}, {selected['city']}\n")
 
-# ================================================
-# Test 2 - Load Reviews
-# ================================================
-print("=" * 50)
-print("LOAD REVIEWS")
-print("=" * 50)
+    df_raw = loader.load_reviews(selected["business_id"])
+    if df_raw.empty:
+        print("No reviews found. Stopping.")
+        return None
 
-df_raw = load_reviews(business_id)
+    df_clean = preprocessor.preprocess(df_raw)
+    print(f"Reviews after cleaning: {len(df_clean)}")
 
-if df_raw.empty:
-    print("Không có review nào. Kết thúc.")
-    sys.exit(1)
+    os.makedirs(output_dir, exist_ok=True)
+    full_path = os.path.join(output_dir, "sample_reviews.json")
+    df_clean.to_json(full_path, orient="records", indent=2, force_ascii=False, date_format="iso")
+    print(f"Saved: {full_path}")
 
-print(f"Tổng reviews : {len(df_raw)}")
-print(f"Từ           : {df_raw['date'].min().date()} đến {df_raw['date'].max().date()}")
-print(f"Avg stars    : {df_raw['stars'].mean():.1f} ★")
+    text_path = os.path.join(output_dir, "sample_reviews_text.json")
+    df_clean[["text"]].to_json(text_path, orient="records", indent=2, force_ascii=False)
+    print(f"Saved text-only: {text_path}")
 
-# ================================================
-# Test 3 - Preprocess
-# ================================================
-print()
-print("=" * 50)
-print("PREPROCESS")
-print("=" * 50)
+    return df_clean
 
-df_clean = preprocess(df_raw)
-print(f"Reviews sau clean : {len(df_clean)}")
-print()
-print("Schema:")
-print(df_clean.dtypes)
 
-# Sample reviews
-print()
-print("Sample 3 reviews:")
-print("-" * 50)
-for _, row in df_clean.head(3).iterrows():
-    print(f"ID    : {row['review_id']}")
-    print(f"Stars : {'★' * row['stars']}{'☆' * (5 - row['stars'])} ({row['stars']})")
-    print(f"Date  : {row['date'].date()}")
-    print(f"Text  : {row['text'][:120]}...")
-    print("-" * 50)
+# --------------------------------------------------------------------------- #
+# Automated test — mocks the pipeline so it runs without stdin or real data.
+# --------------------------------------------------------------------------- #
 
-# ================================================
-# Lưu output ra processed/
-# ================================================
-OUTPUT_PATH = "backend/data/processed/sample_reviews.json"
-os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-df_clean.to_json(OUTPUT_PATH, orient="records", indent=2, force_ascii=False, date_format="iso")
-print(f"\nĐã lưu ra: {OUTPUT_PATH}")
+def _fake_results() -> list[dict]:
+    return [
+        {
+            "name": "Test Diner",
+            "address": "1 Main St",
+            "city": "Townsville",
+            "state": "CA",
+            "review_count": 120,
+            "score": 100,
+            "business_id": "b1",
+        }
+    ]
 
-# File chỉ có text — cho LLM xử lý
-OUTPUT_TEXT = "backend/data/processed/sample_reviews_text.json"
-df_text = df_clean[["text"]].copy()
-df_text.to_json(OUTPUT_TEXT, orient="records", indent=2, force_ascii=False)
-print(f"Đã lưu text only : {OUTPUT_TEXT}")
+
+def _fake_reviews() -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "review_id": ["r1", "r2", "r3"],
+            "business_id": ["b1", "b1", "b1"],
+            "stars": [5, 4, 3],
+            "text": ["Great food", "Good service", "A bit slow"],
+            "date": pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"]),
+        }
+    )
+    return df
+
+
+def test_run_demo_with_mocked_pipeline(monkeypatch, tmp_path):
+    inputs = iter(["Test Diner", "1"])
+    monkeypatch.setattr("builtins.input", lambda *args, **kwargs: next(inputs))
+    monkeypatch.setattr(loader, "search_business", lambda name: _fake_results())
+    monkeypatch.setattr(loader, "load_reviews", lambda business_id: _fake_reviews())
+    monkeypatch.setattr(preprocessor, "preprocess", lambda df: df)
+
+    df_clean = run_demo(output_dir=str(tmp_path))
+
+    assert df_clean is not None
+    assert len(df_clean) == 3
+    assert (tmp_path / "sample_reviews.json").exists()
+    assert (tmp_path / "sample_reviews_text.json").exists()
+
+
+def test_run_demo_handles_no_matches(monkeypatch, tmp_path):
+    monkeypatch.setattr("builtins.input", lambda *args, **kwargs: "Unknown")
+    monkeypatch.setattr(loader, "search_business", lambda name: [])
+
+    assert run_demo(output_dir=str(tmp_path)) is None
+
+
+if __name__ == "__main__":
+    run_demo()

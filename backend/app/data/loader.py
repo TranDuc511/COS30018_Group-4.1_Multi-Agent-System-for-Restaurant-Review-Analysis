@@ -1,16 +1,34 @@
 import os
 import json
+from pathlib import Path
+
 import pandas as pd
 from dotenv import load_dotenv
+
 from app.data.matching import fuzzy_search
 
 load_dotenv()
 
-BUSINESS_PATH = os.getenv("YELP_BUSINESS_PATH", "backend/data/raw/yelp_academic_dataset_business.json")
-REVIEW_PATH   = os.getenv("YELP_REVIEW_PATH",   "backend/data/raw/yelp_academic_dataset_review.json")
-MAX_REVIEWS   = int(os.getenv("MAX_REVIEW_SAMPLE", 100))
+# Resolve dataset paths against the repository root so they work no matter the
+# current working directory (project root, backend/, or anywhere else).
+# loader.py lives at <repo>/backend/app/data/loader.py -> parents[3] == <repo>.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Cache — load 1 lần duy nhất
+
+def _resolve(path_str: str) -> str:
+    path = Path(path_str)
+    return str(path if path.is_absolute() else _REPO_ROOT / path)
+
+
+BUSINESS_PATH = _resolve(
+    os.getenv("YELP_BUSINESS_PATH", "backend/data/raw/yelp_academic_dataset_business.json")
+)
+REVIEW_PATH = _resolve(
+    os.getenv("YELP_REVIEW_PATH", "backend/data/raw/yelp_academic_dataset_review.json")
+)
+MAX_REVIEWS = int(os.getenv("MAX_REVIEW_SAMPLE", 100))
+
+# Cache — load once only
 _businesses_cache = []
 
 
@@ -38,13 +56,13 @@ def _load_businesses() -> list[dict]:
 
 
 def search_business(name: str, top_n: int = 3) -> list[dict]:
-    """Load businesses từ cache và fuzzy match với tên nhập vào."""
+    """Load businesses from cache and fuzzy match against the entered name."""
     businesses = _load_businesses()
     return fuzzy_search(name, businesses, top_n)
 
 
 def load_reviews(business_id: str) -> pd.DataFrame:
-    """Load reviews của business_id, lấy MAX_REVIEWS gần nhất."""
+    """Load reviews for business_id, keeping the most recent MAX_REVIEWS."""
     rows = []
     with open(REVIEW_PATH, "r", encoding="utf-8") as f:
         for line in f:
@@ -63,7 +81,7 @@ def load_reviews(business_id: str) -> pd.DataFrame:
             })
 
     if not rows:
-        print(f"Không tìm thấy review nào cho business_id: {business_id}")
+        print(f"No reviews found for business_id: {business_id}")
         return pd.DataFrame(columns=["review_id", "business_id", "stars", "text", "date"])
 
     df = pd.DataFrame(rows)
@@ -72,9 +90,9 @@ def load_reviews(business_id: str) -> pd.DataFrame:
 
     total_found = len(df)
     if total_found <= MAX_REVIEWS:
-        print(f"Business có {total_found} reviews — lấy hết.")
+        print(f"Business has {total_found} reviews — keeping all.")
     else:
-        print(f"Business có {total_found} reviews — lấy {MAX_REVIEWS} mới nhất.")
+        print(f"Business has {total_found} reviews — keeping the {MAX_REVIEWS} most recent.")
         df = df.head(MAX_REVIEWS)
 
     return df.reset_index(drop=True)
