@@ -1,8 +1,52 @@
+import json
+from unittest.mock import MagicMock, patch
+
 from app.agents.strategy_agent import (
+    StrategyAgent,
     _candidate_models,
-    _completion_options,
     generate_recommendations,
 )
+from app.schemas.contracts import AgentError, StrategyOutput
+
+PATCH_TARGET = "app.agents.base_agent.OpenAI"
+
+STRATEGY_PAYLOAD = {
+    "patterns": [
+        {
+            "description": "Repeated wait-time complaints",
+            "aspect": "wait_time",
+            "frequency": 0.42,
+            "evidence_review_ids": ["r1", "r2"],
+        }
+    ],
+    "root_causes": [
+        {
+            "pattern": "Repeated wait-time complaints",
+            "cause": "Possible staffing issue during busy periods",
+            "confidence": "high",
+        }
+    ],
+}
+
+STRATEGY_OUTPUT = {
+    "recommendations": [
+        {
+            "priority": 1,
+            "issue": "Possible staffing issue during busy periods",
+            "action": "Review peak-hour staffing levels.",
+            "category": "operations",
+            "expected_impact": "Reduce wait-time complaints",
+        }
+    ],
+    "status": "success",
+    "error_detail": None,
+}
+
+
+def make_llm_response(content: dict) -> MagicMock:
+    mock = MagicMock()
+    mock.choices[0].message.content = json.dumps(content)
+    return mock
 
 
 def test_generate_recommendations_prioritizes_confidence_and_frequency():
@@ -95,6 +139,46 @@ def test_generate_recommendations_requires_api_key_for_llm_mode(monkeypatch):
     assert result["error_detail"] == "OPENAI_API_KEY is not set."
 
 
+def test_generate_recommendations_llm_retries_invalid_output_then_succeeds(monkeypatch):
+    monkeypatch.setattr("app.agents.strategy_agent._load_environment", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    with patch(PATCH_TARGET) as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = [
+            make_llm_response({"wrong_field": "bad"}),
+            make_llm_response(STRATEGY_OUTPUT),
+        ]
+
+        result = generate_recommendations(STRATEGY_PAYLOAD, use_llm=True)
+
+    assert result["status"] == "success"
+    assert mock_client.chat.completions.create.call_count == 2
+    StrategyOutput.model_validate(result)
+
+
+def test_generate_recommendations_llm_exhausted_retries_returns_agent_error(monkeypatch):
+    monkeypatch.setattr("app.agents.strategy_agent._load_environment", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    with patch(PATCH_TARGET) as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = make_llm_response(
+            {"wrong_field": "bad"}
+        )
+
+        result = generate_recommendations(STRATEGY_PAYLOAD, use_llm=True)
+
+    assert result["status"] == "error"
+    assert result["agent"] == "strategy_agent"
+    assert result["error_type"] == "schema_validation_error"
+    assert result["retry_count"] == StrategyAgent.MAX_RETRIES
+    assert mock_client.chat.completions.create.call_count == StrategyAgent.MAX_RETRIES + 1
+    AgentError.model_validate(result)
+
+
 def test_candidate_models_use_primary_and_fallback_defaults(monkeypatch):
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_FALLBACK_MODEL", raising=False)
@@ -108,9 +192,3 @@ def test_candidate_models_allow_explicit_primary_override(monkeypatch):
 
     assert _candidate_models() == ["gpt-5", "gpt-5-mini"]
 
-
-def test_completion_options_use_openai_json_mode():
-    assert _completion_options() == {
-        "response_format": {"type": "json_object"},
-        "temperature": 0,
-    }

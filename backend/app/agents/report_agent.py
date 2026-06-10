@@ -6,12 +6,12 @@ and an LLM-backed mode (use_llm=True) that uses the configured OpenAI models.
 
 import json
 import os
-from typing import Any
 
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from app.schemas.contracts import ReportGeneratorInput, ReportOutput
+from app.agents.base_agent import BaseAgent
+from app.schemas.contracts import AgentError, ReportGeneratorInput, ReportOutput
 
 _REPORT_TITLE = "Restaurant Review Analysis Report"
 
@@ -48,10 +48,6 @@ def _candidate_models() -> list[str]:
         os.getenv("OPENAI_MODEL", "gpt-5.4"),
         os.getenv("OPENAI_FALLBACK_MODEL", "gpt-5.4-mini"),
     ]
-
-
-def _completion_options() -> dict[str, Any]:
-    return {"response_format": {"type": "json_object"}, "temperature": 0}
 
 
 def _error(detail: str) -> dict:
@@ -108,33 +104,41 @@ def _deterministic_report(payload: dict) -> dict:
     }
 
 
+class ReportAgent(BaseAgent):
+    def __init__(self) -> None:
+        super().__init__()
+        self._model, self._fallback_model = _candidate_models()
+
+    def run(self, input_data: dict) -> dict:
+        original_task = (
+            "Generate the final restaurant review analysis report from these "
+            f"upstream outputs:\n{json.dumps(input_data, indent=2)}"
+        )
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": original_task},
+        ]
+
+        result, error, error_type, attempts = self._run_with_retry(
+            messages,
+            ReportOutput,
+            original_task,
+        )
+
+        if result is not None:
+            return result
+
+        return AgentError(
+            agent="report_agent",
+            error_type=error_type or "unknown_error",
+            error_detail=error or "Unknown error",
+            retry_count=attempts,
+            recoverable=False,
+        ).model_dump()
+
+
 def _llm_report(payload: dict) -> dict:
-    from openai import OpenAI
-
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_BASE_URL"))
-    user_prompt = json.dumps(payload, indent=2)
-    last_error: Exception | None = None
-
-    for model in _candidate_models():
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                **_completion_options(),
-            )
-            data = json.loads(response.choices[0].message.content)
-            data.setdefault("title", _REPORT_TITLE)
-            data.setdefault("status", "success")
-            data.setdefault("error_detail", None)
-            validated = ReportOutput.model_validate(data)
-            return validated.model_dump()
-        except Exception as exc:  # noqa: BLE001 - fall through to fallback model
-            last_error = exc
-
-    return _error(f"LLM report generation failed: {last_error}")
+    return ReportAgent().run(payload)
 
 
 def generate_report(payload: dict, use_llm: bool = True) -> dict:

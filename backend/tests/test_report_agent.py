@@ -1,8 +1,71 @@
+import json
+from unittest.mock import MagicMock, patch
+
 from app.agents.report_agent import (
+    ReportAgent,
     _candidate_models,
-    _completion_options,
     generate_report,
 )
+from app.schemas.contracts import AgentError, ReportOutput
+
+PATCH_TARGET = "app.agents.base_agent.OpenAI"
+
+REPORT_PAYLOAD = {
+    "business_name": "Example Restaurant",
+    "sample_size": 3,
+    "analysis_summary": {},
+    "reasoning_summary": {
+        "patterns": [
+            {
+                "description": "Wait-time complaints appear repeatedly.",
+                "aspect": "wait_time",
+                "frequency": 0.67,
+                "evidence_review_ids": ["r1", "r2"],
+            }
+        ],
+        "root_causes": [
+            {
+                "pattern": "Wait-time complaints appear repeatedly.",
+                "cause": "Possible staffing issue during peak periods",
+                "confidence": "high",
+            }
+        ],
+    },
+    "recommendations": [
+        {
+            "priority": 1,
+            "issue": "Possible staffing issue during peak periods",
+            "action": "Review peak-hour staffing levels.",
+            "category": "operations",
+            "expected_impact": "Reduce wait-time complaints",
+        }
+    ],
+}
+
+REPORT_OUTPUT = {
+    "title": "Restaurant Review Analysis Report",
+    "business_name": "Example Restaurant",
+    "sample_size": 3,
+    "executive_summary": "Wait times are the main recurring issue.",
+    "key_findings": ["Wait-time complaints appear repeatedly."],
+    "root_causes": [
+        {
+            "pattern": "Wait-time complaints appear repeatedly.",
+            "cause": "Possible staffing issue during peak periods",
+            "confidence": "high",
+        }
+    ],
+    "recommendations": REPORT_PAYLOAD["recommendations"],
+    "limitations": ["Analysis is based on a small sampled review set."],
+    "status": "success",
+    "error_detail": None,
+}
+
+
+def make_llm_response(content: dict) -> MagicMock:
+    mock = MagicMock()
+    mock.choices[0].message.content = json.dumps(content)
+    return mock
 
 
 def test_generate_report_builds_deterministic_report():
@@ -117,15 +180,49 @@ def test_generate_report_requires_api_key_for_llm_mode(monkeypatch):
     assert result["error_detail"] == "OPENAI_API_KEY is not set."
 
 
+def test_generate_report_llm_retries_invalid_output_then_succeeds(monkeypatch):
+    monkeypatch.setattr("app.agents.report_agent._load_environment", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    with patch(PATCH_TARGET) as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.side_effect = [
+            make_llm_response({"wrong_field": "bad"}),
+            make_llm_response(REPORT_OUTPUT),
+        ]
+
+        result = generate_report(REPORT_PAYLOAD, use_llm=True)
+
+    assert result["status"] == "success"
+    assert mock_client.chat.completions.create.call_count == 2
+    ReportOutput.model_validate(result)
+
+
+def test_generate_report_llm_exhausted_retries_returns_agent_error(monkeypatch):
+    monkeypatch.setattr("app.agents.report_agent._load_environment", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    with patch(PATCH_TARGET) as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = make_llm_response(
+            {"wrong_field": "bad"}
+        )
+
+        result = generate_report(REPORT_PAYLOAD, use_llm=True)
+
+    assert result["status"] == "error"
+    assert result["agent"] == "report_agent"
+    assert result["error_type"] == "schema_validation_error"
+    assert result["retry_count"] == ReportAgent.MAX_RETRIES
+    assert mock_client.chat.completions.create.call_count == ReportAgent.MAX_RETRIES + 1
+    AgentError.model_validate(result)
+
+
 def test_report_candidate_models_use_configured_primary_and_fallback(monkeypatch):
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
     monkeypatch.setenv("OPENAI_FALLBACK_MODEL", "gpt-5-mini")
 
     assert _candidate_models() == ["gpt-5", "gpt-5-mini"]
 
-
-def test_report_completion_options_use_openai_json_mode():
-    assert _completion_options() == {
-        "response_format": {"type": "json_object"},
-        "temperature": 0,
-    }
