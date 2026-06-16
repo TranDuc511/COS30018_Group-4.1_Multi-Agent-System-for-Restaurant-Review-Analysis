@@ -518,3 +518,56 @@ Planned evaluation areas:
 | Agent output is invalid | Validate every JSON output and allow up to 2 self-correction retries. |
 | Agent enters repeated failure loop | Track retry counts in Orchestrator state and halt or skip after limits are reached. |
 | Downstream agents receive missing data | Require downstream agents to handle `null` input and produce partial output when possible. |
+
+## 16. Frontend Dashboard Status
+
+The frontend is now a Vite + React dashboard for viewing the restaurant review
+analysis report.
+
+Current frontend entry points:
+
+- `frontend/src/App.jsx`: renders the dashboard page.
+- `frontend/src/pages/Dashboard.jsx`: main report dashboard UI.
+- `frontend/src/api/client.js`: calls the FastAPI `/api/reports` endpoint.
+- `frontend/src/styles.css`: dashboard styling and responsive layout.
+
+The dashboard includes:
+
+- restaurant-name and sample-cap inputs;
+- report status display;
+- executive summary;
+- sample-size, top-issue, issue-frequency, and priority-action KPI cards;
+- sentiment distribution bar;
+- key findings;
+- aspect breakdown table;
+- detected patterns;
+- root causes;
+- prioritised recommendations;
+- limitations and error detail display.
+
+The dashboard uses local preview data when the backend returns the current
+placeholder response (`status: "not_implemented"`). Once `/api/reports` is wired
+to the backend pipeline, the frontend should render the real API response through
+the same dashboard components.
+
+Run the frontend locally:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Build the frontend:
+
+```bash
+cd frontend
+npm run build
+```
+
+The frontend expects the backend API at `http://localhost:8000` by default. Set
+`VITE_API_BASE_URL` if the FastAPI server runs elsewhere.
+
+Current limitation: the dashboard is ready to consume a report response, but the
+backend `/api/reports` route still needs to call the real pipeline and return the
+report schema described above.
