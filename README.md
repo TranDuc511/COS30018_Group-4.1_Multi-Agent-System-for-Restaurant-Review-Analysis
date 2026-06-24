@@ -157,6 +157,33 @@ The dataset contains millions of reviews, so the system must not load or process
 the full dataset inside the LLM pipeline. After matching a restaurant, the system
 randomly samples a maximum of 100 review records for analysis.
 
+### 5.1 Build the SQLite index (one-time, after pulling)
+
+The raw `.json` files and the generated SQLite database are **git-ignored** (too
+large for git), so each teammate builds the index locally from their own copy of
+the dataset.
+
+1. Place the Yelp files in `backend/data/raw/`:
+   - `yelp_academic_dataset_business.json`
+   - `yelp_academic_dataset_review.json`
+2. From `backend/`, run the one-time build (~2–3 minutes; scans the 5 GB review
+   file once):
+
+   ```bash
+   python scripts/build_db.py            # add --rebuild to overwrite an existing DB
+   ```
+
+   This creates `backend/data/processed/yelp.db` with a `reviews` and
+   `businesses` table indexed by `business_id`.
+
+After this, `loader.load_reviews` queries the index (a few **milliseconds**)
+instead of scanning the raw file (~**52 seconds**). Once built, you may delete the
+raw `.json` files to reclaim disk — the app reads everything from the DB.
+
+> Fallback: if `yelp.db` is missing but the raw `.json` files are present, the app
+> still works by scanning the files directly (just slower). If neither is present,
+> there is no data to analyse. Override the DB location with `YELP_DB_PATH`.
+
 ## 6. Dataset Plan
 
 This section is reserved for the detailed implementation plan.
