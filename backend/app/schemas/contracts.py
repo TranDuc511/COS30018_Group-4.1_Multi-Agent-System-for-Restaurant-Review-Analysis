@@ -44,6 +44,12 @@ class AnalysisOutput(BaseModel):
     error_detail: str | None = None
 
 
+class AnalysisBatchOutput(BaseModel):
+    """One LLM call analyses several reviews at once to stay within rate limits."""
+
+    analyses: list[AnalysisOutput]
+
+
 class Pattern(BaseModel):
     description: str
     aspect: AspectCategory

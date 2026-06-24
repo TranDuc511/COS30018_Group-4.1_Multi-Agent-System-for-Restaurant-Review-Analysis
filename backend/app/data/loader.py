@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 from pathlib import Path
 
 import pandas as pd
@@ -28,14 +29,45 @@ REVIEW_PATH = _resolve(
 )
 MAX_REVIEWS = int(os.getenv("MAX_REVIEW_SAMPLE", 100))
 
+# SQLite index built by backend/scripts/build_db.py. When present, business/review
+# lookups query the indexed DB (milliseconds) instead of scanning the raw JSON
+# files (~1 minute). When absent, everything falls back to the raw-file path.
+DB_PATH = _resolve(os.getenv("YELP_DB_PATH", "backend/data/processed/yelp.db"))
+
 # Cache — load once only
 _businesses_cache = []
+
+
+def _db_available() -> bool:
+    return bool(DB_PATH) and os.path.exists(DB_PATH)
 
 
 def _load_businesses() -> list[dict]:
     global _businesses_cache
     if _businesses_cache:
         return _businesses_cache
+
+    if _db_available():
+        print("Loading business dataset from SQLite...")
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            cur = conn.execute(
+                "SELECT business_id, name, address, city, state, review_count FROM businesses"
+            )
+            for bid, name, address, city, state, review_count in cur:
+                _businesses_cache.append({
+                    "business_id":  bid,
+                    "name":         name,
+                    "address":      address or "",
+                    "city":         city or "",
+                    "state":        state or "",
+                    "review_count": review_count or 0,
+                })
+        finally:
+            conn.close()
+        print(f"Loaded {len(_businesses_cache)} businesses.")
+        return _businesses_cache
+
     print("Loading business dataset...")
     with open(BUSINESS_PATH, "r", encoding="utf-8") as f:
         for line in f:
@@ -61,8 +93,43 @@ def search_business(name: str, top_n: int = 3) -> list[dict]:
     return fuzzy_search(name, businesses, top_n)
 
 
+_REVIEW_COLUMNS = ["review_id", "business_id", "stars", "text", "date"]
+
+
+def _load_reviews_from_db(business_id: str) -> pd.DataFrame:
+    """Fetch the most recent MAX_REVIEWS for a business straight from the index."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        total_found = conn.execute(
+            "SELECT COUNT(*) FROM reviews WHERE business_id = ?", (business_id,)
+        ).fetchone()[0]
+        rows = conn.execute(
+            "SELECT review_id, business_id, stars, text, date "
+            "FROM reviews WHERE business_id = ? ORDER BY date DESC LIMIT ?",
+            (business_id, MAX_REVIEWS),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        print(f"No reviews found for business_id: {business_id}")
+        return pd.DataFrame(columns=_REVIEW_COLUMNS)
+
+    if total_found <= MAX_REVIEWS:
+        print(f"Business has {total_found} reviews — keeping all.")
+    else:
+        print(f"Business has {total_found} reviews — keeping the {MAX_REVIEWS} most recent.")
+
+    df = pd.DataFrame(rows, columns=_REVIEW_COLUMNS)
+    df["date"] = pd.to_datetime(df["date"])
+    return df.reset_index(drop=True)
+
+
 def load_reviews(business_id: str) -> pd.DataFrame:
     """Load reviews for business_id, keeping the most recent MAX_REVIEWS."""
+    if _db_available():
+        return _load_reviews_from_db(business_id)
+
     rows = []
     with open(REVIEW_PATH, "r", encoding="utf-8") as f:
         for line in f:

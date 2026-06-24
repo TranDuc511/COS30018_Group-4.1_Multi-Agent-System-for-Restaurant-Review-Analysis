@@ -11,13 +11,18 @@ Keeping them in one place means the API, the CLI, and the tests all exercise the
 exact same wiring.
 """
 
+import os
 from typing import Any
 
-from app.agents.analysis_agent import analyse_review
+from app.agents.analysis_agent import analyse_reviews
 from app.agents.reasoning_agent import reason_over_reviews
 from app.agents.report_agent import generate_report
 from app.agents.strategy_agent import generate_recommendations
 from app.core.state import PipelineState
+
+# Number of reviews sent to the analysis LLM per request. Batching keeps the
+# total request count low so we stay within Groq's per-minute rate limits.
+ANALYSIS_BATCH_SIZE = int(os.getenv("ANALYSIS_BATCH_SIZE", 10))
 
 
 def _reviews_as_records(reviews: Any) -> list[dict]:
@@ -47,18 +52,21 @@ def passthrough_preprocess_node(state: PipelineState) -> PipelineState:
 
 def analysis_node(state: PipelineState) -> PipelineState:
     records = _reviews_as_records(state.get("reviews_df"))
+    reviews = [
+        {
+            "review_id": str(r["review_id"]),
+            "stars": int(r["stars"]),
+            "text": str(r["text"]),
+            "date": str(r["date"]),
+        }
+        for r in records
+    ]
+
     results = []
-    for r in records:
-        results.append(
-            analyse_review(
-                {
-                    "review_id": str(r["review_id"]),
-                    "stars": int(r["stars"]),
-                    "text": str(r["text"]),
-                    "date": str(r["date"]),
-                }
-            )
-        )
+    for start in range(0, len(reviews), ANALYSIS_BATCH_SIZE):
+        batch = reviews[start : start + ANALYSIS_BATCH_SIZE]
+        results.extend(analyse_reviews(batch))
+
     state["analysis_results"] = results
     return state
 

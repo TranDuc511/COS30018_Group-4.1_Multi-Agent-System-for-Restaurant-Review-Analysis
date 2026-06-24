@@ -7,9 +7,9 @@ import {
   Clock3,
   ListChecks,
   Play,
-  Search,
 } from "lucide-react";
 import { createReport } from "../api/client.js";
+import BusinessPicker from "../components/BusinessPicker.jsx";
 
 const PREVIEW_REPORT = {
   title: "Restaurant Review Analysis Report",
@@ -307,7 +307,7 @@ function RecommendationTable({ recommendations }) {
 }
 
 export default function Dashboard() {
-  const [restaurantName, setRestaurantName] = useState("Example Bistro");
+  const [selected, setSelected] = useState(null);
   const [sampleCap, setSampleCap] = useState(100);
   const [report, setReport] = useState(PREVIEW_REPORT);
   const [requestState, setRequestState] = useState("preview");
@@ -323,18 +323,24 @@ export default function Dashboard() {
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (!selected) {
+      setRequestState("error");
+      setMessage("Hãy tìm và chọn một nhà hàng trước.");
+      return;
+    }
     setRequestState("running");
     setMessage("Generating report...");
 
     try {
       const apiReport = await createReport({
-        restaurant_name: restaurantName,
+        restaurant_name: selected.name,
+        business_id: selected.business_id,
         sample_size: Number(sampleCap),
       });
       const normalized = normalizeReport(apiReport);
       setReport({
         ...normalized,
-        business_name: normalized.business_name || restaurantName,
+        business_name: normalized.business_name || selected.name,
         sample_size: normalized.sample_size || Number(sampleCap),
       });
       setRequestState(apiReport.status === "not_implemented" ? "preview" : "success");
@@ -356,19 +362,29 @@ export default function Dashboard() {
           <h1>Restaurant Review Analysis</h1>
           <p>Sample-based report dashboard</p>
         </div>
+      </header>
 
-        <form className="report-form" onSubmit={handleSubmit}>
-          <label>
-            <span>Restaurant</span>
-            <div className="input-shell">
-              <Search size={16} aria-hidden="true" />
-              <input
-                value={restaurantName}
-                onChange={(event) => setRestaurantName(event.target.value)}
-                aria-label="Restaurant name"
-              />
-            </div>
-          </label>
+      <section className="panel" style={{ marginBottom: 18 }}>
+        <div className="section-title">
+          <h2>1. Chọn nhà hàng</h2>
+          <span>tìm theo tên, chọn từ kết quả gần nhất</span>
+        </div>
+        <BusinessPicker selectedId={selected?.business_id} onSelect={setSelected} />
+
+        <form className="run-bar" onSubmit={handleSubmit}>
+          <div className="run-bar__sel">
+            {selected ? (
+              <>
+                <CheckCircle2 size={18} aria-hidden="true" />
+                <div>
+                  <strong>{selected.name}</strong>
+                  <span>{selected.review_count} reviews</span>
+                </div>
+              </>
+            ) : (
+              <span className="run-bar__hint">Chưa chọn nhà hàng nào.</span>
+            )}
+          </div>
           <label className="sample-input">
             <span>Sample Cap</span>
             <input
@@ -380,12 +396,16 @@ export default function Dashboard() {
               aria-label="Sample cap"
             />
           </label>
-          <button type="submit" disabled={requestState === "running"}>
+          <button
+            type="submit"
+            className="run-bar__btn"
+            disabled={!selected || requestState === "running"}
+          >
             <Play size={16} aria-hidden="true" />
             Generate Report
           </button>
         </form>
-      </header>
+      </section>
 
       <section className="report-heading">
         <div>
