@@ -11,3 +11,4 @@ fuzzywuzzy
 python-levenshtein
 langchain-openai
 pytest
+scikit-learn  # eval Tier 2: sentiment accuracy + per-aspect macro-F1

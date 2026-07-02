@@ -1,0 +1,9 @@
+{
+  "business_name": "Example Bistro",
+  "business_id": "EXAMPLE_biz_0001",
+  "pipeline_status": "complete",
+  "skipped_agents": [],
+  "failed_agent": null,
+  "errors": {},
+  "retry_counts": {}
+}

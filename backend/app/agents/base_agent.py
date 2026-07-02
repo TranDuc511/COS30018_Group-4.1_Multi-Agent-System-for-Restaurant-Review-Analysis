@@ -32,13 +32,28 @@ Return only valid JSON that matches the schema. Do not add explanation."""
 class BaseAgent(ABC):
     MAX_RETRIES = 2
 
+    # Cumulative prompt+completion tokens across all agent instances, used by
+    # eval/harness.py to report LLM cost per 100 reviews. Additive/optional:
+    # if the provider's response has no `usage` field this simply stays 0.
+    total_tokens_used: int = 0
+
+    @classmethod
+    def reset_token_usage(cls) -> None:
+        cls.total_tokens_used = 0
+
     def __init__(self) -> None:
         self._client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
             base_url=os.getenv("OPENAI_BASE_URL"),
         )
-        self._model = os.getenv("OPENAI_MODEL", "llama-3.3-70b-versatile")
-        self._fallback_model = os.getenv("OPENAI_FALLBACK_MODEL", "llama-3.1-8b-instant")
+        self._model = os.getenv("OPENAI_MODEL", "gemini-2.5-flash")
+        self._fallback_model = os.getenv("OPENAI_FALLBACK_MODEL", "gemini-2.5-flash")
+
+    def _record_usage(self, resp) -> None:
+        usage = getattr(resp, "usage", None)
+        tokens = getattr(usage, "total_tokens", None) if usage is not None else None
+        if tokens:
+            BaseAgent.total_tokens_used += tokens
 
     def _call_llm(self, messages: list[dict], model: str | None = None) -> str:
         target = model or self._model
@@ -49,6 +64,7 @@ class BaseAgent(ABC):
                 temperature=0,
                 response_format={"type": "json_object"},
             )
+            self._record_usage(resp)
             return resp.choices[0].message.content
         except Exception as primary_exc:
             if target == self._fallback_model:
@@ -60,6 +76,7 @@ class BaseAgent(ABC):
                 temperature=0,
                 response_format={"type": "json_object"},
             )
+            self._record_usage(resp)
             return resp.choices[0].message.content
 
     def _run_with_retry(

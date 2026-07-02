@@ -21,8 +21,9 @@ If you'd rather not activate, call the interpreter directly:
 - Copy `.env.example` to `.env` and fill in values. **Do not commit `.env`.**
 - `OPENAI_API_KEY` is required for integration/e2e tests. Without it, those tests
   **auto-skip** (unit tests still run).
-- The current `.env` targets Groq's OpenAI-compatible endpoint
-  (`OPENAI_BASE_URL=https://api.groq.com/openai/v1`).
+- The current `.env` targets Gemini's OpenAI-compatible endpoint
+  (`OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`,
+  `OPENAI_MODEL=gemini-2.5-flash`).
 
 > ⚠️ `backend/.env.example` has historically shipped a real-looking key. Replace
 > it with a placeholder and rotate any exposed key.
@@ -64,8 +65,24 @@ Defined in `pytest.ini`:
 | `test_strategy_agent.py` / `test_report_agent.py` | strategy / report agents | mocked |
 | `test_orchestrator.py` / `test_orchestrator_routing.py` | retry/skip/halt decisions and routing | none |
 | `test_graph.py` / `test_state.py` | full graph wiring + state | mocked agents |
-| `test_integration.py` | analysis + reasoning | **real Groq** |
-| `test_e2e_pipeline.py` | **full pipeline, all 5 stages through the real graph** | **real Groq** |
+| `test_integration.py` | analysis + reasoning | **real Gemini** |
+| `test_e2e_pipeline.py` | **full pipeline, all 5 stages through the real graph** | **real Gemini** |
+
+## Running the full pipeline (not a test)
+
+From `backend/` (needs `OPENAI_API_KEY` and the dataset files):
+
+```bash
+# Interactive
+python run_pipeline.py
+
+# Non-interactive, and dump each agent phase's JSON for inspection / evaluation
+python run_pipeline.py --name "McDonald's" --pick 1 --dump-stages out/
+```
+
+`--dump-stages` writes `analysis|reasoning|strategy|report.json` plus
+`_summary.json` from the final pipeline state - the input the Tier-1 evaluator
+consumes (README section 14).
 
 ## Notes & gotchas
 

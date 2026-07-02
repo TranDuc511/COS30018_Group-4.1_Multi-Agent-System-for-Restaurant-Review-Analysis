@@ -6,6 +6,86 @@ an old one if a decision changes.
 
 ---
 
+## 2026-07-01 - All agents use Gemini 2.5 Flash via the OpenAI-compatible endpoint
+
+**Decision:** Switch every LLM call (analysis, reasoning, strategy, report, and
+the orchestrator recovery call) to **`gemini-2.5-flash`**, reached through
+Gemini's OpenAI-compatible endpoint
+(`OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`).
+`OPENAI_API_KEY` now holds a Google AI Studio key; the `OPENAI_*` variable names
+are kept so the existing `openai` client and `langchain_openai.ChatOpenAI` code
+runs unchanged. Default model strings in `base_agent.py`, `orchestrator.py`,
+`report_agent.py`, and `strategy_agent.py` now default to `gemini-2.5-flash`;
+the fallback slot is retained but also points at `gemini-2.5-flash`. Supersedes
+the Groq / `llama-3.3-70b-versatile` config noted in the 2026-06-08 entry below.
+
+**Why:** The whole LLM layer is already OpenAI-shaped (base_url override,
+`response_format={"type":"json_object"}`), so targeting Gemini's compat endpoint
+is a config-plus-defaults change rather than a rewrite, and is trivially
+reversible. This is unrelated to commit `a0ef24c` (removed the old *Gemini live
+agent* provider) - that was a live/streaming provider; this is standard chat
+completions.
+
+**Affects:** `app/agents/base_agent.py`, `app/core/orchestrator.py`,
+`app/agents/report_agent.py`, `app/agents/strategy_agent.py`, `.env.example`,
+`app/core/nodes.py` (comment). Verify with `test_integration.py` /
+`test_e2e_pipeline.py` that Gemini's compat layer honours the JSON `response_format`.
+Note: `eval/tier3_judge.py` must use a *different* `JUDGE_MODEL` (e.g. a stronger
+Gemini) to keep the LLM-as-judge unbiased now that all agents share one model.
+
+---
+
+## 2026-06-13 - Per-stage JSON dump from the pipeline runner
+
+**Decision:** `run_pipeline.py` gains a `--dump-stages <dir>` flag that writes
+each agent phase's output (`analysis.json`, `reasoning.json`, `strategy.json`,
+`report.json`) plus a `_summary.json` (status, skipped agents, errors, retry
+counts), pulled straight from the final pipeline state.
+
+**Why:** A pipeline run and its evaluation should be decoupled. The dumped JSON
+is the input to the Tier-1 evaluator, and the per-phase artifacts make it obvious
+which stage degraded during a demo or debugging session. Skipped / failed stages
+are written as `null` / their error payload rather than omitted.
+
+**Affects:** `backend/run_pipeline.py`. Feeds the evaluation plan (README 14).
+
+---
+
+## 2026-06-13 - Evaluation approach: three tiers
+
+**Decision:** Evaluate in three tiers - (1) deterministic checks with no labels
+or API (schema validity, enum compliance, reasoning groundedness, recomputed
+frequencies, cross-stage consistency, completion rate, latency / cost),
+(2) a 30-50 review labelled gold set for the analysis agent only (sentiment
+accuracy, aspect macro-F1), and (3) rubric scoring (human or different-model LLM
+judge) for the subjective stages. Detail in README 14.
+
+**Why:** Each stage's output is derivable from the previous one, so most
+correctness questions reduce to deterministic consistency checks that need no
+ground truth. Only the analysis agent has objectively checkable labels; the
+reasoning / strategy / report stages are subjective and are not gold-setted.
+
+**Affects:** `backend/eval/` (planned), README 14. Resolves the open "evaluation
+criteria" gap.
+
+---
+
+## 2026-06-13 - Dataset index: SQLite (default), subset-extract as a demo shortcut
+
+**Decision:** Replace the 5.3 GB linear scan of `review.json` with a SQLite index
+keyed on `business_id`. If the demo is scripted to a few known restaurants, a
+one-off pre-extracted subset of those businesses' reviews is an acceptable
+lighter-weight shortcut.
+
+**Why:** Every `/api/reports` call and every evaluation run currently re-scans
+5.3 GB to find one restaurant's reviews. SQLite is stdlib, single-file, and the
+option README 6 already names; it makes lookups index-backed without new infra.
+This supersedes the open "SQLite vs Parquet" question in favour of SQLite.
+
+**Affects:** `app/data/loader.py`, `backend/data/`.
+
+---
+
 ## 2026-06-08 — Project docs live in `docs/`; convention files stay at root
 
 **Decision:** `CLAUDE.md`, `PROGRESS.md`, `DECISIONS.md`, and `RUN_TESTS.md` live in

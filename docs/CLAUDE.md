@@ -12,7 +12,7 @@ report. Backend is Python (FastAPI + LangGraph); frontend is a Vite/React
 placeholder.
 
 See [`PROGRESS.md`](PROGRESS.md) for current status, [`DECISIONS.md`](DECISIONS.md)
-for the decision log, and [`RUN_TESTS.md`](RUN_TESTS.md) for running tests.
+for the decision log, and [`RUN_TESTS.md`](RUN_TESTS.md) for running tests, and [`PLAN.md`](PLAN.md) for the Phase 2 / 3 work plan.
 
 ## Repository layout (high level)
 
@@ -34,6 +34,7 @@ The full file tree lives in [`README.md`](../README.md#repository-structure).
 - Install deps: `pip install -r requirements.txt` (from `backend/`).
 - Run the API (stub today): `uvicorn app.main:app --reload`.
 - Data demo (interactive, real dataset): `python -m tests.test_data_pipeline`.
+- Run the full pipeline on a real restaurant: `python run_pipeline.py --name "..." --pick 1`. Add `--dump-stages <dir>` to write each agent phase's JSON (input for the evaluator).
 
 ## Tests
 
@@ -42,7 +43,7 @@ Full detail in [`RUN_TESTS.md`](RUN_TESTS.md). Quick reference (from `backend/`)
 ```bash
 python -m pytest                      # everything
 python -m pytest -m "not integration" # fast unit suite, no LLM calls
-python -m pytest -m integration       # real Groq LLM calls (needs OPENAI_API_KEY)
+python -m pytest -m integration       # real Gemini LLM calls (needs OPENAI_API_KEY)
 ```
 
 Integration/e2e tests auto-skip when `OPENAI_API_KEY` is unset.

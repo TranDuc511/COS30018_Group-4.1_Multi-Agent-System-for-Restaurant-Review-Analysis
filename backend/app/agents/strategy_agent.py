@@ -49,8 +49,8 @@ def _load_environment() -> None:
 
 def _candidate_models() -> list[str]:
     return [
-        os.getenv("OPENAI_MODEL", "gpt-5.4"),
-        os.getenv("OPENAI_FALLBACK_MODEL", "gpt-5.4-mini"),
+        os.getenv("OPENAI_MODEL", "gemini-2.5-flash"),
+        os.getenv("OPENAI_FALLBACK_MODEL", "gemini-2.5-flash"),
     ]
 
 

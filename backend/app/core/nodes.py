@@ -21,7 +21,7 @@ from app.agents.strategy_agent import generate_recommendations
 from app.core.state import PipelineState
 
 # Number of reviews sent to the analysis LLM per request. Batching keeps the
-# total request count low so we stay within Groq's per-minute rate limits.
+# total request count low so we stay within Gemini's per-minute rate limits.
 ANALYSIS_BATCH_SIZE = int(os.getenv("ANALYSIS_BATCH_SIZE", 10))
 
 

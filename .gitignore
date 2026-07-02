@@ -49,3 +49,11 @@ Thumbs.db
 backend/trace_agents.py
 backend/trace_agents_live.py
 
+docs/
+
+.env.example
+
+# eval CLI output artifacts (generated, not source)
+backend/eval/**/tier1_report.json
+backend/eval/**/tier2_scores.json
+backend/eval/**/tier3_scores.json

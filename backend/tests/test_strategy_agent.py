@@ -183,7 +183,7 @@ def test_candidate_models_use_primary_and_fallback_defaults(monkeypatch):
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_FALLBACK_MODEL", raising=False)
 
-    assert _candidate_models() == ["gpt-5.4", "gpt-5.4-mini"]
+    assert _candidate_models() == ["gemini-2.5-flash", "gemini-2.5-flash"]
 
 
 def test_candidate_models_allow_explicit_primary_override(monkeypatch):

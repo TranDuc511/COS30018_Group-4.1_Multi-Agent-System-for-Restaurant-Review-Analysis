@@ -1,5 +1,5 @@
 """
-Integration tests — make real LLM calls via Groq API.
+Integration tests — make real LLM calls via the Gemini API.
 
 Run with:
     cd backend

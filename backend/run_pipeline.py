@@ -8,6 +8,7 @@ Usage (from the backend/ directory, with the venv active):
     python run_pipeline.py
     python run_pipeline.py --name "McDonald's"          # skip the name prompt
     python run_pipeline.py --name "McDonald's" --pick 1 # fully non-interactive
+    python run_pipeline.py --name "McDonald's" --pick 1 --dump-stages out/
 
 Requires OPENAI_API_KEY (the agents make real LLM calls). The dataset files must
 be present under backend/data/raw/ (see RUN_TESTS.md / README).
@@ -28,7 +29,7 @@ def _choose_match(results: list[dict], pick: int | None) -> dict | None:
     print()
     for i, r in enumerate(results, start=1):
         print(
-            f"{i}. {r['name']} — {r.get('address', '')}, {r.get('city', '')}, "
+            f"{i}. {r['name']} - {r.get('address', '')}, {r.get('city', '')}, "
             f"{r.get('state', '')} (reviews={r.get('review_count', 0)}, "
             f"score={r.get('score')}, id={r['business_id']})"
         )
@@ -87,6 +88,40 @@ def _print_report(report: dict) -> None:
     print("=" * 70)
 
 
+def _dump_stages(final_state: dict, out_dir: str) -> None:
+    """Write each agent phase's JSON output to <out_dir> for inspection/demo.
+
+    Pulls the per-stage payloads straight out of the final pipeline state, so it
+    captures whatever each agent produced - including a skipped/None stage or an
+    ``status: "error"`` payload - which is exactly what you want when debugging
+    which phase degraded.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    stages = {
+        "analysis": final_state.get("analysis_results"),
+        "reasoning": final_state.get("reasoning_output"),
+        "strategy": final_state.get("strategy_output"),
+        "report": final_state.get("report_output"),
+    }
+    summary = {
+        "business_name": final_state.get("business_name"),
+        "business_id": final_state.get("business_id"),
+        "pipeline_status": final_state.get("pipeline_status"),
+        "skipped_agents": final_state.get("skipped_agents"),
+        "failed_agent": final_state.get("failed_agent"),
+        "errors": final_state.get("errors"),
+        "retry_counts": final_state.get("retry_counts"),
+    }
+
+    for name, payload in {"_summary": summary, **stages}.items():
+        path = os.path.join(out_dir, f"{name}.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
+        state = "missing" if payload is None else "ok"
+        print(f"  wrote {path} ({state})")
+
+
 def main() -> int:
     load_dotenv()
 
@@ -94,10 +129,15 @@ def main() -> int:
     parser.add_argument("--name", help="Restaurant name (skips the prompt).")
     parser.add_argument("--pick", type=int, help="Auto-select the Nth match (1-based).")
     parser.add_argument("--json", action="store_true", help="Print the raw report JSON.")
+    parser.add_argument(
+        "--dump-stages",
+        metavar="DIR",
+        help="Write each agent phase's JSON (analysis/reasoning/strategy/report + _summary) to DIR.",
+    )
     args = parser.parse_args()
 
     if not os.getenv("OPENAI_API_KEY"):
-        print("OPENAI_API_KEY is not set — the agents need it to run. See RUN_TESTS.md.")
+        print("OPENAI_API_KEY is not set - the agents need it to run. See RUN_TESTS.md.")
         return 1
 
     business_name = args.name or input("Restaurant name: ")
@@ -132,6 +172,10 @@ def main() -> int:
     print(f"\nPipeline status: {status}")
     if final_state.get("skipped_agents"):
         print(f"Skipped stages : {final_state['skipped_agents']}")
+
+    if args.dump_stages:
+        print(f"\nDumping per-stage JSON to {args.dump_stages}/ ...")
+        _dump_stages(final_state, args.dump_stages)
 
     report = final_state.get("report_output")
     if not report or report.get("status") != "success":

@@ -190,7 +190,7 @@ This section is reserved for the detailed implementation plan.
 
 Planned approach:
 
-- Store preprocessed business and review data in SQLite or Parquet.
+- Store preprocessed review data in a SQLite index keyed on `business_id` (SQLite chosen over Parquet; a pre-extracted subset of demo restaurants is acceptable for a scripted demo).
 - Create an index on `business_id` for fast review lookup.
 - Create a searchable restaurant-name field for fuzzy matching.
 - Return the top 3 restaurant matches when the input name is ambiguous.
@@ -524,16 +524,51 @@ a more polished dashboard, but it increases implementation work.
 
 ## 14. Evaluation Plan
 
-This section is reserved for future evaluation criteria.
+The pipeline is evaluated in three tiers, cheapest and highest-signal first.
+Tiers 1 and 2 consume the per-stage JSON written by
+`python run_pipeline.py --dump-stages <dir>`, so a pipeline run and its scoring
+stay decoupled.
 
-Planned evaluation areas:
+### 14.1 Tier 1 - Deterministic checks (no labels, no API)
 
-- Sentiment and aspect classification quality.
-- JSON schema validity rate.
-- Agent retry success rate.
-- Pipeline completion rate.
-- Runtime and LLM cost for up to 100 reviews.
-- Usefulness of the final report.
+These run in CI and catch real bugs (hallucinated categories, invented evidence,
+wrong frequencies) with no ground truth required.
+
+Whole pipeline:
+
+- Completion rate: share of runs ending `complete` vs `skip` / `halted`.
+- Schema-validity rate: every per-stage payload validates against
+  `app/schemas/contracts.py`.
+- Latency and LLM cost per 100 reviews.
+- Reproducibility: a fixed sample seed yields the same sample twice.
+- Degradation correctness: an injected malformed output triggers the designed
+  retry / skip / halt path.
+
+Per agent:
+
+- Analysis: every `sentiment` and aspect `category` is one of the allowed enum
+  values (anything else is a hallucination).
+- Reasoning (groundedness): every `evidence_review_id` is an analysis result
+  that actually carries that aspect, and each claimed `frequency` matches the
+  frequency recomputed from the analysis results (within tolerance).
+- Strategy: each recommendation `issue` traces back to a reasoning pattern or
+  root cause; higher-frequency issues get higher priority.
+- Report: findings, root causes, and recommendations are subsets of upstream
+  outputs (no new claims); all schema sections are populated.
+
+### 14.2 Tier 2 - Labeled gold set (analysis agent only)
+
+The analysis agent is the only stage with objectively checkable answers.
+Hand-label 30-50 reviews with sentiment and aspects, then compute sentiment
+accuracy and per-aspect macro-F1. Star rating is used only as a noisy
+cross-check (5 stars -> positive, 1-2 stars -> negative), not as ground truth.
+
+### 14.3 Tier 3 - Rubric scoring (subjective stages)
+
+Root-cause plausibility, recommendation actionability, and report usefulness
+have no formula. They are scored 1-5 against a rubric, by a human (for the final
+report) or by an LLM judge using a different / stronger model than the one that
+produced the output. Kept small - this informs the demo writeup, not CI.
 
 ## 15. Key Risks and Mitigations
 

@@ -23,7 +23,7 @@ class OrchestratorAgent:
     def _get_llm(self) -> ChatOpenAI:
         if self._llm is None:
             self._llm = ChatOpenAI(
-                model=os.getenv("OPENAI_MODEL", "gpt-5.4"),
+                model=os.getenv("OPENAI_MODEL", "gemini-2.5-flash"),
                 base_url=os.getenv("OPENAI_BASE_URL"),
                 temperature=0,
             )
