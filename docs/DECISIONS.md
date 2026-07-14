@@ -6,6 +6,26 @@ an old one if a decision changes.
 
 ---
 
+## 2026-07-14 - AGENTS.md remains authoritative; deviations are not new decisions
+
+**Decision:** Keep the GPT-5.4 model family, seeded random sampling, maximum
+sample size 100, two self-correction retries, and structured status/error
+contracts as the agreed target in `AGENTS.md`.
+
+Current Gemini defaults, local provider overrides, most-recent review selection,
+and ignored request-level sample caps are implementation deviations. They do not
+supersede `AGENTS.md` and must be labeled as deviations until the team explicitly
+changes the decision.
+
+**Why:** Documentation previously mixed target architecture, historical provider
+experiments, local configuration, and implemented behavior. That made evaluation
+results impossible to attribute consistently.
+
+**Affects:** `README.md`, `docs/PROGRESS.md`, `docs/RUN_TESTS.md`,
+`docs/CLAUDE.md`, and `PROJECT_AUDIT.md`.
+
+---
+
 ## 2026-07-01 - All agents use Gemini 2.5 Flash via the OpenAI-compatible endpoint
 
 **Decision:** Switch every LLM call (analysis, reasoning, strategy, report, and
@@ -65,8 +85,8 @@ correctness questions reduce to deterministic consistency checks that need no
 ground truth. Only the analysis agent has objectively checkable labels; the
 reasoning / strategy / report stages are subjective and are not gold-setted.
 
-**Affects:** `backend/eval/` (planned), README 14. Resolves the open "evaluation
-criteria" gap.
+**Affects:** `backend/eval/`, README 13. The evaluation framework is now
+implemented; human Tier 2 labels and live Tier 3 execution remain pending.
 
 ---
 
@@ -185,9 +205,33 @@ These were agreed before this log existed; recorded here for traceability. See
 
 ---
 
+## 2026-07-14 — Seeded sampling and bounded graph recovery
+
+**Decision:** `MAX_REVIEW_SAMPLE` is the configurable cap, validated from 1 to
+100 and defaulting to 100. Raw and SQLite loaders sort candidates by review ID
+before sampling with `RANDOM_SEED`. POST, SSE, and CLI callers may request a
+smaller validated sample.
+
+Graph recovery permits two retries. After exhaustion, critical analysis or
+reasoning failures halt; non-critical strategy or report failures skip. If the
+recovery model raises or returns an invalid decision while retries remain, the
+deterministic fallback is `retry`.
+
+**Why:** This implements the documented methodology and prevents stale failure
+state or a recovery-provider outage from creating an unbounded graph loop.
+
+**Affects:** `app/data/loader.py`, `app/main.py`, `run_pipeline.py`,
+`app/core/nodes.py`, `app/core/graph.py`, `app/core/orchestrator.py`, evaluation,
+tests, and current project documentation.
+
+---
+
 ## Open questions / undecided
 
-- Final report output schema (README §11.9 is still a draft).
-- Dataset persistence format — SQLite vs Parquet for the `business_id` index.
-- Frontend framework commitment (React vs simpler Streamlit prototype — README §12).
-- Whether `orchestrator.decide_recovery` should fall back to `halt` (or a non-LLM heuristic) when its own recovery LLM call fails — today an exception there crashes the graph.
+- Whether to keep GPT-5.4 as the binding target or formally adopt another
+  provider/model family.
+- Minimum fuzzy-match acceptance score.
+- Whether the final frontend should merge Dashboard and Pipeline Monitor into one
+  shared run state.
+- Deployment scope: trusted local demo only, or authenticated/rate-limited web
+  service.

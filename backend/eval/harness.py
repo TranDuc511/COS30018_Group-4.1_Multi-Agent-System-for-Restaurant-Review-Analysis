@@ -25,24 +25,15 @@ from app.data import loader, preprocessor
 
 
 def measure_reproducibility(business_name: str, pick: int, seed: int) -> bool:
-    """Run the loader twice for the same match and assert an identical sampled
-    review_id set.
-
-    NOTE: `loader.load_reviews` currently selects deterministically (most
-    recent `MAX_REVIEW_SAMPLE` reviews by date) rather than a seeded random
-    sample - `seed` is accepted for the future randomised-sampling case (see
-    DECISIONS.md / config.settings.random_seed) but has no effect today. This
-    check still earns its keep as a regression guard: if sampling is later
-    made random, this is what catches a seed that silently stops being honoured.
-    """
+    """Assert identical review IDs from two runs with the same sample seed."""
     results = loader.search_business(business_name)
     if not results or not (1 <= pick <= len(results)):
         raise ValueError(f"--pick {pick} out of range for '{business_name}' ({len(results)} matches)")
     business_id = results[pick - 1]["business_id"]
 
-    _ = seed  # reserved for when load_reviews accepts a seeded sample
-    ids_1 = set(loader.load_reviews(business_id)["review_id"])
-    ids_2 = set(loader.load_reviews(business_id)["review_id"])
+    with patch.object(loader, "RANDOM_SEED", seed):
+        ids_1 = set(loader.load_reviews(business_id)["review_id"])
+        ids_2 = set(loader.load_reviews(business_id)["review_id"])
     return ids_1 == ids_2 and len(ids_1) > 0
 
 
@@ -143,7 +134,7 @@ def check_degradation_paths() -> list[dict]:
     _run("critical_retry", "analysis_agent", retry_count=0, expect_status="retry", expect_route="analysis_agent", forced_decision="retry")
 
     # Critical agent exhausted retries -> real hard rule halts (no LLM call needed).
-    _run("critical_exhausted_halts", "analysis_agent", retry_count=3, expect_status="halted", expect_route="END")
+    _run("critical_exhausted_halts", "analysis_agent", retry_count=2, expect_status="halted", expect_route="END")
 
     # Critical agent, orchestrator (wrongly) says skip -> node downgrades to halt.
     _run("critical_skip_downgraded_to_halt", "reasoning_agent", retry_count=0, expect_status="halted", expect_route="END", forced_decision="skip")
@@ -155,7 +146,7 @@ def check_degradation_paths() -> list[dict]:
     _run("noncritical_skip_on_last_stage_ends", "report_agent", retry_count=0, expect_status="skip", expect_route="END", forced_decision="skip")
 
     # Non-critical agent exhausted retries -> real hard rule skips (no LLM call needed).
-    _run("noncritical_exhausted_skips", "strategy_agent", retry_count=3, expect_status="skip", expect_route="report_agent")
+    _run("noncritical_exhausted_skips", "strategy_agent", retry_count=2, expect_status="skip", expect_route="report_agent")
 
     return scenarios
 

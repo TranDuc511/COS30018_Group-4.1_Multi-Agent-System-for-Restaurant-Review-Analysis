@@ -128,6 +128,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the full review-analysis pipeline.")
     parser.add_argument("--name", help="Restaurant name (skips the prompt).")
     parser.add_argument("--pick", type=int, help="Auto-select the Nth match (1-based).")
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=None,
+        help=f"Review sample size (1-{loader.MAX_REVIEWS}; default: {loader.MAX_REVIEWS}).",
+    )
     parser.add_argument("--json", action="store_true", help="Print the raw report JSON.")
     parser.add_argument(
         "--dump-stages",
@@ -135,6 +141,8 @@ def main() -> int:
         help="Write each agent phase's JSON (analysis/reasoning/strategy/report + _summary) to DIR.",
     )
     args = parser.parse_args()
+    if args.sample_size is not None and not 1 <= args.sample_size <= loader.MAX_REVIEWS:
+        parser.error(f"--sample-size must be between 1 and {loader.MAX_REVIEWS}")
 
     if not os.getenv("OPENAI_API_KEY"):
         print("OPENAI_API_KEY is not set - the agents need it to run. See RUN_TESTS.md.")
@@ -154,7 +162,7 @@ def main() -> int:
     print(f"\n>> Selected: {selected['name']} ({selected['business_id']})")
 
     print("Loading reviews...")
-    df_raw = loader.load_reviews(selected["business_id"])
+    df_raw = loader.load_reviews(selected["business_id"], args.sample_size)
     if df_raw.empty:
         print("No reviews found for that business. Stopping.")
         return 1

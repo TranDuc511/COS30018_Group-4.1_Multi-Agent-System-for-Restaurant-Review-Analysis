@@ -2,13 +2,13 @@ import json
 import time
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.pipeline import build_pipeline, initial_state, run_pipeline
-from app.data.loader import load_reviews, search_business
+from app.data.loader import MAX_REVIEWS, load_reviews, search_business
 from app.data.preprocessor import preprocess
 from app.schemas.contracts import ReportOutput
 
@@ -31,7 +31,7 @@ app.add_middleware(
 class ReportRequest(BaseModel):
     restaurant_name: str
     business_id: Optional[str] = None  # when set, skip search and use this business directly
-    sample_size: Optional[int] = None  # reserved for P3-1; env var controls cap today
+    sample_size: Optional[int] = Field(default=None, ge=1, le=MAX_REVIEWS)
 
 
 class BusinessMatch(BaseModel):
@@ -114,7 +114,7 @@ def create_report(request: ReportRequest):
         business_name = best["name"]
 
     # 2. Load and preprocess reviews.
-    df = load_reviews(business_id)
+    df = load_reviews(business_id, request.sample_size)
     if df.empty:
         raise HTTPException(
             status_code=404,
@@ -148,7 +148,11 @@ def create_report(request: ReportRequest):
 
 
 @app.get("/api/reports/stream")
-def stream_report(restaurant_name: str, business_id: Optional[str] = None):
+def stream_report(
+    restaurant_name: str,
+    business_id: Optional[str] = None,
+    sample_size: Optional[int] = Query(default=None, ge=1, le=MAX_REVIEWS),
+):
     """Run the pipeline and stream per-stage progress events (Server-Sent Events).
 
     Emits one ``stage_start`` and one ``stage_end`` (with ``duration_ms``) per
@@ -180,7 +184,7 @@ def stream_report(restaurant_name: str, business_id: Optional[str] = None):
 
             yield sse({"type": "stage_start", "stage": "load_reviews"})
             t0 = time.perf_counter()
-            df = load_reviews(best["business_id"])
+            df = load_reviews(best["business_id"], sample_size)
             if df.empty:
                 yield sse({"type": "error", "stage": "load_reviews",
                            "detail": f"No reviews found for '{best['name']}'"})

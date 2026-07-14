@@ -1,5 +1,7 @@
 # Rubric: Report Usefulness (Tier 3)
 
+_Reviewed 2026-07-14. Score against the stage dump, not the report in isolation._
+
 Scores the final `report.json` as a whole for usefulness to a restaurant owner.
 Best scored by a human for the final demo; an LLM judge (different model) may
 pre-screen.

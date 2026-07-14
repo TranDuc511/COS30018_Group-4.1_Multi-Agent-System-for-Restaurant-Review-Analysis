@@ -13,6 +13,7 @@ class OrchestratorAgent:
     # all resolve to the same agent. If a critical agent fails it must halt
     # the pipeline rather than be skipped.
     CRITICAL_AGENTS = {"analysis", "reasoning"}
+    MAX_RECOVERY_RETRIES = 2
 
     def __init__(self):
         # LLM client is created lazily so importing/instantiating the
@@ -41,7 +42,7 @@ class OrchestratorAgent:
         critical = self.is_critical(failed_agent)
 
         # Hard rules first — no need to call the LLM.
-        if retry_count >= 3:
+        if retry_count >= self.MAX_RECOVERY_RETRIES:
             return "halt" if critical else "skip"
 
         prompt = f"""
@@ -60,10 +61,13 @@ Choose exactly ONE:
 
 Respond with ONLY one word: retry, skip, or halt
 """
-        response = self._get_llm().invoke([HumanMessage(content=prompt)])
+        try:
+            response = self._get_llm().invoke([HumanMessage(content=prompt)])
+        except Exception:
+            return "retry"
         decision = response.content.strip().lower()
 
         # Safety fallback if the LLM returns something unexpected.
         if decision not in ("retry", "skip", "halt"):
-            return "halt"
+            return "retry"
         return decision

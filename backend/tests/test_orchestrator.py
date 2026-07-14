@@ -17,6 +17,6 @@ def test_decide_halt_after_max_retries():
     decision = orchestrator.decide_recovery(
         failed_agent="analysis",
         error_detail="Persistent JSON parse failure",
-        retry_count=3
+        retry_count=2
     )
     assert decision == "halt"  # hard rule — critical agent, retries exhausted

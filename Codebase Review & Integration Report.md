@@ -4,11 +4,21 @@
 **Date:** June 2026
 **Scope:** Alignment of the repository with the project overview (`README.md`, `AGENTS.md`), integration of `Testing_Orchestrator/` into `backend/app`, and repair of broken backend components.
 
+> **Historical report.** This document records the June 2026 integration work.
+> It is not the current project-status source. Use
+> [`docs/PROGRESS.md`](docs/PROGRESS.md) and
+> [`PROJECT_AUDIT.md`](PROJECT_AUDIT.md) for the 2026-07-14 state.
+
 ---
 
 ## 1. Summary
 
 The `backend/` and `frontend/` trees match the documented structure in `README.md`. The main problems were a stale duplicate orchestrator folder living outside `backend/app`, several truncated source files, and an interactive script that could not run under `pytest`. All issues below are resolved. The offline backend test suite now passes: **44 passed, 5 live-LLM integration tests deselected**.
+
+Current verification has advanced to **67 offline tests passed and 6 live tests
+deselected**. FastAPI report endpoints, the React dashboard, the pipeline
+monitor, SQLite support, and evaluation tooling were added after this historical
+review.
 
 ---
 
@@ -78,4 +88,10 @@ The 5 deselected tests make real LLM API calls and are marked `integration`, con
 
 - **Line endings:** `git status` reports nearly every file as modified due to a CRLF↔LF mismatch (not real content changes). Adding a `.gitattributes` with `* text=auto eol=lf` would normalize this and remove the phantom diffs.
 - **Rotate the Groq API key**, since it was shared in chat.
-- The `core/config.py` `Settings` model and the `.env` variables (`MAX_REVIEW_SAMPLE`, `RANDOM_SEED`) are not yet connected to the data loader, which reads `os.getenv` directly — worth unifying later.
+- The `core/config.py` `Settings` model remains separate from the loader, which
+  reads `MAX_REVIEW_SAMPLE` and `RANDOM_SEED` directly from the environment.
+
+The sampling and chained-recovery P0 defects were fixed on 2026-07-14. Current
+priorities are cross-record contract validation, provider/model drift, trusted
+report metadata, and the missing local SQLite index. See
+[`PROJECT_AUDIT.md`](PROJECT_AUDIT.md).

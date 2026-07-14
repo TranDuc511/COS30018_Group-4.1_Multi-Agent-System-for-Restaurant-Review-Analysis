@@ -1,70 +1,118 @@
-# CLAUDE.md
+# AI-Agent Working Guide
 
-Guidance for Claude Code (and any AI agent) working in this repository.
-Read [`AGENTS.md`](../AGENTS.md) first — it holds the binding project rules. This
-file adds the practical "how to work here" details.
+Read [AGENTS.md](../AGENTS.md) first. It contains the binding project rules.
+This file contains practical repository guidance.
 
-## What this project is
+## Project
 
-Multi-agent system (COS30018 Intelligent Systems) that turns a sample of Yelp
-restaurant reviews into patterns, root causes, recommendations, and a final web
-report. Backend is Python (FastAPI + LangGraph); frontend is a Vite/React
-placeholder.
+COS30018 multi-agent restaurant-review analysis system:
 
-See [`PROGRESS.md`](PROGRESS.md) for current status, [`DECISIONS.md`](DECISIONS.md)
-for the decision log, and [`RUN_TESTS.md`](RUN_TESTS.md) for running tests, and [`PLAN.md`](PLAN.md) for the Phase 2 / 3 work plan.
+- Python, FastAPI, LangGraph, and Pydantic backend;
+- Yelp raw JSON with optional SQLite index;
+- analysis, reasoning, strategy, and report agents;
+- React dashboard and SSE pipeline monitor;
+- three-tier evaluation tooling.
 
-## Repository layout (high level)
+Current status: [PROGRESS.md](PROGRESS.md).
 
-- `backend/app/agents/` — analysis, reasoning, strategy, report agents (`base_agent.py` holds the shared LLM + self-correction loop).
-- `backend/app/core/` — `state.py` (PipelineState), `graph.py` (LangGraph wiring), `orchestrator.py` (retry/skip/halt), `config.py`.
-- `backend/app/data/` — `loader.py`, `matching.py` (fuzzy), `preprocessor.py`.
-- `backend/app/schemas/contracts.py` — Pydantic contracts shared by every stage.
-- `backend/tests/` — unit + integration + e2e tests.
-- `frontend/` — Vite/React dashboard placeholder.
+Decision history: [DECISIONS.md](DECISIONS.md).
 
-The full file tree lives in [`README.md`](../README.md#repository-structure).
+Verification commands: [RUN_TESTS.md](RUN_TESTS.md).
+Confirmed defects and priorities: [PROJECT_AUDIT.md](../PROJECT_AUDIT.md).
 
-## Environment & commands
+## Layout
 
-- **Always run backend commands from the `backend/` directory.** Paths and pytest config assume `cwd = backend/`.
-- Use the project virtualenv: `backend/venv/`. The system Python does **not** have the deps (`pytest`, `langgraph`, `openai`, …).
-  - PowerShell: `./venv/Scripts/Activate.ps1`
-  - Direct interpreter: `./venv/Scripts/python.exe -m pytest`
-- Install deps: `pip install -r requirements.txt` (from `backend/`).
-- Run the API (stub today): `uvicorn app.main:app --reload`.
-- Data demo (interactive, real dataset): `python -m tests.test_data_pipeline`.
-- Run the full pipeline on a real restaurant: `python run_pipeline.py --name "..." --pick 1`. Add `--dump-stages <dir>` to write each agent phase's JSON (input for the evaluator).
+- `backend/app/agents/`: agents and shared LLM/self-correction loop.
+- `backend/app/core/`: state, nodes, graph, orchestrator, pipeline.
+- `backend/app/data/`: loader, matching, preprocessing.
+- `backend/app/schemas/contracts.py`: executable Pydantic contracts.
+- `backend/app/main.py`: FastAPI endpoints.
+- `backend/eval/`: Tier 1, Tier 1b, Tier 2, and Tier 3 tools.
+- `backend/tests/`: offline and live tests.
+- `frontend/src/`: dashboard, pipeline monitor, API client, and styles.
+
+## Commands
+
+Run backend commands from `backend/`:
+
+```powershell
+pip install -r requirements.txt
+python -m pytest -m "not integration"
+uvicorn app.main:app --reload
+python run_pipeline.py --name "McDonald's" --pick 1 --dump-stages out/
+```
+
+Prefer `backend/venv/`. On the audited Windows machine,
+`C:\Users\ADMIN\anaconda3\envs\ml\python.exe` is also verified.
+
+Frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+npm run build
+```
+
+## Contracts and Boundaries
+
+- Every agent returns JSON-compatible output with `status` and
+  `error_detail`.
+- Validate inter-agent output with `app/schemas/contracts.py`.
+- Self-correction retries at most two times.
+- Analysis and reasoning are critical; strategy and report are non-critical.
+- Keep loading, matching, sampling, and agent logic separate.
+- API and CLI must reuse `app/core/pipeline.py`; do not create parallel
+  pipeline implementations.
+
+## Implemented P0 Contracts
+
+- Raw and SQLite loaders use `RANDOM_SEED` for reproducible random sampling.
+- `sample_size` is validated and applied by POST and SSE report endpoints.
+- Production nodes write and clear recovery metadata at node boundaries.
+- Graph recovery stops after two retries and handles recovery-provider failure
+  deterministically.
+
+## Known Implementation Deviations
+
+- `AGENTS.md` specifies the GPT-5.4 family; code/example defaults use Gemini,
+  while local `.env` may override both.
+- Batch analysis validation does not enforce exact input/output review IDs.
+- Report identity and sample size remain model-controlled.
+
+Do not describe any deviation as compliant behavior. Link
+[PROJECT_AUDIT.md](../PROJECT_AUDIT.md) until it is fixed.
+
+## Dataset
+
+- Paths are resolved relative to the repository root.
+- Raw files live directly under `backend/data/raw/`.
+- Raw data and generated DB/output files are git-ignored.
+- Build `backend/data/processed/yelp.db` before demos:
+
+```powershell
+cd backend
+python scripts/build_db.py
+```
+
+Without the DB, one report scans the full 5.34 GB review file.
 
 ## Tests
 
-Full detail in [`RUN_TESTS.md`](RUN_TESTS.md). Quick reference (from `backend/`):
-
-```bash
-python -m pytest                      # everything
-python -m pytest -m "not integration" # fast unit suite, no LLM calls
-python -m pytest -m integration       # real Gemini LLM calls (needs OPENAI_API_KEY)
+```powershell
+python -m pytest                      # includes live tests when configured
+python -m pytest -m "not integration" # offline
+python -m pytest -m integration       # external model calls
 ```
 
-Integration/e2e tests auto-skip when `OPENAI_API_KEY` is unset.
+The live E2E test uses four in-memory reviews. It validates model + graph wiring,
+not Yelp loading, FastAPI, or the frontend.
 
-## Conventions
+## Secrets and Git
 
-- Every agent returns a JSON-compatible dict with `status` and `error_detail`.
-- Validate outputs against `app/schemas/contracts.py` (Pydantic) — don't pass loose dicts between stages.
-- Agent self-correction retries at most 2 times; after that it returns `status: "error"` and the orchestrator decides retry/skip/halt.
-- Critical agents are `analysis` and `reasoning` (see `OrchestratorAgent.CRITICAL_AGENTS`); strategy and report are non-critical and may be skipped.
-- Keep data loading separate from agent logic; keep fuzzy matching separate from sampling.
-- LLM-backed agents support a deterministic `use_llm=False` mode for offline/unit tests.
-
-## Gotchas (learned the hard way)
-
-- **Dataset paths**: `loader.py` anchors relative paths to the **repo root** (`Path(__file__).parents[3]`). So `.env` paths must be repo-root-relative, e.g. `backend/data/raw/yelp_academic_dataset_business.json`.
-- **Dataset files** live at `backend/data/raw/*.json` as plain files (they were once wrapped in redundant same-named folders — flattened). They are git-ignored.
-- **Real-LLM tests are non-deterministic**: don't assert the model echoes input fields verbatim, and expect occasional graceful degradation (a non-critical stage skipping). The e2e test retries the whole pipeline a few times to stay reliable.
-- **Secret hygiene**: `backend/.env.example` historically contained a live-looking key. Never commit real keys; use placeholders.
-
-## Git
-
-Do not commit or push unless asked. Check `git status --short` first; stage only
-task-related files. Never rewrite history unless explicitly told to.
+- Never commit `.env`, raw datasets, generated DBs, or evaluation outputs.
+- Keep `.env.example` free of real credentials.
+- Do not commit or push unless asked.
+- Check `git status --short`.
+- Stage only task-related files.
+- Never rewrite history unless explicitly requested.

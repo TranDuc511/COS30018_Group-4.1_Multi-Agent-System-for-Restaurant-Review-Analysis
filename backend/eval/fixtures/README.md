@@ -1,28 +1,36 @@
-# eval/fixtures/
+# Evaluation Fixtures
 
-`sample_dump/` is a committed `--dump-stages`-shaped output so Tier 1 checks can
-run in CI with **no LLM / no API**.
+`sample_dump/` is a committed `--dump-stages`-shaped output for offline or
+future CI Tier 1 checks. It requires no LLM or API key. No CI workflow currently
+exists.
 
-## Provenance of `sample_dump/`
+## Provenance
 
-Built deterministically, not from a live pipeline run:
+The fixture was built deterministically, not from a live pipeline:
 
-- `analysis.json` / `reasoning.json` — hand-authored review data (12 reviews for
-  "Example Bistro", same style as `tests/mock_data.py`), with every pattern's
-  `frequency` and `evidence_review_ids` computed programmatically from the
-  authored analysis so the numbers are genuinely consistent, not just typed in.
-- `strategy.json` / `report.json` — produced by the **real** deterministic
-  (non-LLM) agent code paths: `generate_recommendations(..., use_llm=False)`
-  and `generate_report(..., use_llm=False)`. No mocking involved for these two.
+- `analysis.json` and `reasoning.json`: hand-authored 12-review data for
+  "Example Bistro"; frequencies and evidence IDs were computed from the authored
+  analyses.
+- `strategy.json` and `report.json`: produced by the real deterministic
+  `use_llm=False` agent paths.
 
-This makes the fixture fully offline and reproducible — the ideal property for
-a permanent CI fixture (no flakiness, no API key ever needed to run Tier 1).
-A live-LLM dump (`python run_pipeline.py --name "<restaurant>" --pick 1
---dump-stages eval/fixtures/live_dump`) can be added alongside this one later
-for a realism spot-check, but is not required for CI.
+This makes the fixture stable and appropriate for regression checks.
 
-`tests/test_eval_tier1.py` runs `eval.tier1_checks.run_all("eval/fixtures/sample_dump")`
-and asserts all 16 checks pass (i.e. this is a "healthy" fixture — every
-groundedness/traceability/subset check succeeds by construction).
+`tests/test_eval_tier1.py` runs the evaluator against this fixture and also
+corrupts copies to verify that hallucinated evidence, incorrect frequencies,
+fabricated report content, invalid enums, and bad completion status are caught.
 
-Keep fixtures small and free of anything sensitive - they are committed to git.
+Verified 2026-07-14: 16/16 Tier 1 checks passed.
+
+## Limits
+
+The fixture proves evaluator behavior and internal consistency. It does not
+prove:
+
+- live model quality;
+- random sampling;
+- Yelp raw-loader behavior;
+- FastAPI or frontend behavior;
+- production recovery-state propagation.
+
+Keep fixtures small, synthetic, and free of sensitive content.

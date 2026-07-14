@@ -7,11 +7,16 @@ dataset. Under pytest, the demo is exercised non-interactively with mocked data,
 so it never blocks on stdin or requires the dataset files.
 """
 
+import json
 import os
+import sqlite3
 
 import pandas as pd
+import pytest
+from pydantic import ValidationError
 
 from app.data import loader, preprocessor
+from app.main import ReportRequest
 
 
 def run_demo(output_dir: str | None = None) -> pd.DataFrame | None:
@@ -117,6 +122,53 @@ def test_run_demo_handles_no_matches(monkeypatch, tmp_path):
     monkeypatch.setattr(loader, "search_business", lambda name: [])
 
     assert run_demo(output_dir=str(tmp_path)) is None
+
+
+def test_seeded_sampling_matches_raw_and_sqlite(monkeypatch, tmp_path):
+    rows = [
+        {
+            "review_id": f"r{i}",
+            "business_id": "b1",
+            "stars": (i % 5) + 1,
+            "text": f"review {i}",
+            "date": f"2024-01-{i + 1:02d}",
+        }
+        for i in range(10)
+    ]
+    review_path = tmp_path / "reviews.json"
+    review_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    monkeypatch.setattr(loader, "REVIEW_PATH", str(review_path))
+    monkeypatch.setattr(loader, "DB_PATH", str(tmp_path / "missing.db"))
+    monkeypatch.setattr(loader, "MAX_REVIEWS", 5)
+    monkeypatch.setattr(loader, "RANDOM_SEED", 42)
+
+    raw_ids = loader.load_reviews("b1", sample_size=4)["review_id"].tolist()
+    assert raw_ids == loader.load_reviews("b1", sample_size=4)["review_id"].tolist()
+    assert set(raw_ids) != {"r6", "r7", "r8", "r9"}
+
+    db_path = tmp_path / "reviews.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE reviews "
+            "(review_id TEXT, business_id TEXT, stars INTEGER, text TEXT, date TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO reviews VALUES (:review_id, :business_id, :stars, :text, :date)",
+            reversed(rows),
+        )
+    monkeypatch.setattr(loader, "DB_PATH", str(db_path))
+
+    assert loader.load_reviews("b1", sample_size=4)["review_id"].tolist() == raw_ids
+    with pytest.raises(ValueError, match="between 1 and 5"):
+        loader.load_reviews("b1", sample_size=0)
+
+
+def test_report_request_validates_sample_size():
+    assert ReportRequest(restaurant_name="Test", sample_size=100).sample_size == 100
+    for invalid in (0, 101):
+        with pytest.raises(ValidationError):
+            ReportRequest(restaurant_name="Test", sample_size=invalid)
 
 
 if __name__ == "__main__":

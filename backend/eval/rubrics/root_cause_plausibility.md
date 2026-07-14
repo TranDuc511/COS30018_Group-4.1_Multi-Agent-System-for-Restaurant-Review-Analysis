@@ -1,5 +1,7 @@
 # Rubric: Root-Cause Plausibility (Tier 3)
 
+_Reviewed 2026-07-14. Treat root causes as hypotheses, not verified causation._
+
 Scores each `RootCause` in `reasoning.json` for how believable and well-supported
 the causal claim is, given the patterns and evidence. Judge with a model
 different from the one that produced the output.

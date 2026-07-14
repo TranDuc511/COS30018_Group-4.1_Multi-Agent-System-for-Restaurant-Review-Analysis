@@ -57,24 +57,24 @@ def route_after_error_handler(state: PipelineState) -> str:
 # ── Error handler node ────────────────────────────────────────────────────────
 
 def _infer_failed_agent(state: PipelineState) -> str:
-    """Determine which stage failed, honouring an explicitly set failed_agent."""
-    explicit = state.get("failed_agent")
-    if explicit:
-        return explicit
+    """Determine the latest failed stage without trusting stale routing state."""
+    for output_key, agent in (
+        ("report_output", "report_agent"),
+        ("strategy_output", "strategy_agent"),
+        ("reasoning_output", "reasoning_agent"),
+    ):
+        out = state.get(output_key) or {}
+        if out.get("status") == "error":
+            return agent
 
     results = state.get("analysis_results") or []
     errors = [r for r in results if r.get("status") == "error"]
     if results and len(errors) > len(results) * 0.5:
         return "analysis_agent"
 
-    for output_key, agent in (
-        ("reasoning_output", "reasoning_agent"),
-        ("strategy_output", "strategy_agent"),
-        ("report_output", "report_agent"),
-    ):
-        out = state.get(output_key) or {}
-        if out.get("status") == "error":
-            return agent
+    explicit = state.get("failed_agent")
+    if explicit:
+        return explicit
 
     return "analysis_agent"  # safe default — error_handler only runs on a real failure
 

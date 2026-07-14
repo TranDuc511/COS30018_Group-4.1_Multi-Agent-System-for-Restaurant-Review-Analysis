@@ -28,6 +28,9 @@ REVIEW_PATH = _resolve(
     os.getenv("YELP_REVIEW_PATH", "backend/data/raw/yelp_academic_dataset_review.json")
 )
 MAX_REVIEWS = int(os.getenv("MAX_REVIEW_SAMPLE", 100))
+RANDOM_SEED = int(os.getenv("RANDOM_SEED", 42))
+if not 1 <= MAX_REVIEWS <= 100:
+    raise ValueError("MAX_REVIEW_SAMPLE must be between 1 and 100")
 
 # SQLite index built by backend/scripts/build_db.py. When present, business/review
 # lookups query the indexed DB (milliseconds) instead of scanning the raw JSON
@@ -96,17 +99,28 @@ def search_business(name: str, top_n: int = 3) -> list[dict]:
 _REVIEW_COLUMNS = ["review_id", "business_id", "stars", "text", "date"]
 
 
-def _load_reviews_from_db(business_id: str) -> pd.DataFrame:
-    """Fetch the most recent MAX_REVIEWS for a business straight from the index."""
+def _sample_reviews(df: pd.DataFrame, sample_size: int | None = None) -> pd.DataFrame:
+    """Return a reproducible random sample independent of input row order."""
+    limit = MAX_REVIEWS if sample_size is None else sample_size
+    if not 1 <= limit <= MAX_REVIEWS:
+        raise ValueError(f"sample_size must be between 1 and {MAX_REVIEWS}")
+    candidates = df.sort_values("review_id")
+    if len(df) <= limit:
+        return candidates.reset_index(drop=True)
+    return (
+        candidates.sample(n=limit, random_state=RANDOM_SEED)
+        .reset_index(drop=True)
+    )
+
+
+def _load_reviews_from_db(business_id: str, sample_size: int | None = None) -> pd.DataFrame:
+    """Fetch and reproducibly sample reviews for a business from the index."""
     conn = sqlite3.connect(DB_PATH)
     try:
-        total_found = conn.execute(
-            "SELECT COUNT(*) FROM reviews WHERE business_id = ?", (business_id,)
-        ).fetchone()[0]
         rows = conn.execute(
             "SELECT review_id, business_id, stars, text, date "
-            "FROM reviews WHERE business_id = ? ORDER BY date DESC LIMIT ?",
-            (business_id, MAX_REVIEWS),
+            "FROM reviews WHERE business_id = ?",
+            (business_id,),
         ).fetchall()
     finally:
         conn.close()
@@ -115,20 +129,17 @@ def _load_reviews_from_db(business_id: str) -> pd.DataFrame:
         print(f"No reviews found for business_id: {business_id}")
         return pd.DataFrame(columns=_REVIEW_COLUMNS)
 
-    if total_found <= MAX_REVIEWS:
-        print(f"Business has {total_found} reviews — keeping all.")
-    else:
-        print(f"Business has {total_found} reviews — keeping the {MAX_REVIEWS} most recent.")
-
     df = pd.DataFrame(rows, columns=_REVIEW_COLUMNS)
     df["date"] = pd.to_datetime(df["date"])
-    return df.reset_index(drop=True)
+    sampled = _sample_reviews(df, sample_size)
+    print(f"Business has {len(df)} reviews — randomly selected {len(sampled)}.")
+    return sampled
 
 
-def load_reviews(business_id: str) -> pd.DataFrame:
-    """Load reviews for business_id, keeping the most recent MAX_REVIEWS."""
+def load_reviews(business_id: str, sample_size: int | None = None) -> pd.DataFrame:
+    """Load a seeded random review sample for a business."""
     if _db_available():
-        return _load_reviews_from_db(business_id)
+        return _load_reviews_from_db(business_id, sample_size)
 
     rows = []
     with open(REVIEW_PATH, "r", encoding="utf-8") as f:
@@ -153,13 +164,6 @@ def load_reviews(business_id: str) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date", ascending=False)
-
-    total_found = len(df)
-    if total_found <= MAX_REVIEWS:
-        print(f"Business has {total_found} reviews — keeping all.")
-    else:
-        print(f"Business has {total_found} reviews — keeping the {MAX_REVIEWS} most recent.")
-        df = df.head(MAX_REVIEWS)
-
-    return df.reset_index(drop=True)
+    sampled = _sample_reviews(df, sample_size)
+    print(f"Business has {len(df)} reviews — randomly selected {len(sampled)}.")
+    return sampled

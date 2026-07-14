@@ -40,6 +40,20 @@ def _reviews_as_records(reviews: Any) -> list[dict]:
     return list(reviews)
 
 
+def _set_stage_error(
+    state: PipelineState, agent: str, error_detail: str | None
+) -> None:
+    """Keep routing state aligned with the output from the node that just ran."""
+    errors = state.setdefault("errors", {})
+    if error_detail:
+        errors[agent] = error_detail
+        state["failed_agent"] = agent
+        return
+    errors.pop(agent, None)
+    state["failed_agent"] = None
+    state["pipeline_status"] = "running"
+
+
 def passthrough_preprocess_node(state: PipelineState) -> PipelineState:
     """No-op preprocess node for callers that load + clean data *before* the graph.
 
@@ -68,6 +82,14 @@ def analysis_node(state: PipelineState) -> PipelineState:
         results.extend(analyse_reviews(batch))
 
     state["analysis_results"] = results
+    failed = [result for result in results if result.get("status") == "error"]
+    error_detail = None
+    if results and len(failed) > len(results) * 0.5:
+        error_detail = "; ".join(
+            result.get("error_detail") or "analysis agent returned an error"
+            for result in failed
+        )
+    _set_stage_error(state, "analysis_agent", error_detail)
     return state
 
 
@@ -82,8 +104,16 @@ def reasoning_node(state: PipelineState) -> PipelineState:
         for a in analysis_results
         if a.get("status") == "success"
     ]
-    state["reasoning_output"] = reason_over_reviews(
+    output = reason_over_reviews(
         cleaned, business_id=state.get("business_id", "unknown")
+    )
+    state["reasoning_output"] = output
+    _set_stage_error(
+        state,
+        "reasoning_agent",
+        (output.get("error_detail") or "reasoning agent returned an error")
+        if output.get("status") == "error"
+        else None,
     )
     return state
 
@@ -94,7 +124,15 @@ def strategy_node(state: PipelineState) -> PipelineState:
         "patterns": reasoning.get("patterns", []),
         "root_causes": reasoning.get("root_causes", []),
     }
-    state["strategy_output"] = generate_recommendations(payload, use_llm=True)
+    output = generate_recommendations(payload, use_llm=True)
+    state["strategy_output"] = output
+    _set_stage_error(
+        state,
+        "strategy_agent",
+        (output.get("error_detail") or "strategy agent returned an error")
+        if output.get("status") == "error"
+        else None,
+    )
     return state
 
 
@@ -113,6 +151,13 @@ def report_node(state: PipelineState) -> PipelineState:
     }
     out = generate_report(payload, use_llm=True)
     state["report_output"] = out
+    _set_stage_error(
+        state,
+        "report_agent",
+        (out.get("error_detail") or "report agent returned an error")
+        if out.get("status") == "error"
+        else None,
+    )
     if out.get("status") == "success":
         state["pipeline_status"] = "complete"
     return state

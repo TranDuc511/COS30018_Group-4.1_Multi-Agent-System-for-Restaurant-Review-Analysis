@@ -27,7 +27,7 @@ These decisions are already agreed for the current plan:
 - Randomly sample up to 100 review records per selected restaurant.
 - Do not claim that the system analyses every review in the Yelp dataset.
 - Agent self-correction retry limit is 2.
-- Keep placeholder sections for:
+- Keep documented sections for:
   - future user-flow diagram
   - evaluation plan
   - dataset implementation plan
@@ -44,13 +44,15 @@ These decisions are already agreed for the current plan:
 - `backend/app/schemas/`: shared Pydantic contracts.
 - `backend/data/raw/`: local raw dataset files. Do not commit real dataset files.
 - `backend/data/processed/`: local generated dataset outputs. Do not commit generated data.
-- `frontend/`: Vite/React dashboard placeholder.
+- `backend/eval/`: deterministic, labeled, and rubric-based evaluation tools.
+- `frontend/`: Vite/React dashboard and pipeline monitor.
+- `PROJECT_AUDIT.md`: verified strengths, weaknesses, and repair priorities.
 
 ## Backend Rules
 
 - Keep the backend Python-first.
 - Use FastAPI for HTTP endpoints.
-- Use LangGraph for the multi-agent pipeline when implementation begins.
+- Use LangGraph for the multi-agent pipeline.
 - Use Pydantic models for contracts instead of loose dictionaries where practical.
 - Keep data loading separate from agent logic.
 - Keep fuzzy restaurant matching separate from review sampling.
@@ -61,6 +63,15 @@ These decisions are already agreed for the current plan:
 - Keep the frontend simple until the backend pipeline works.
 - Do not overbuild the UI before the report schema is stable.
 - The frontend should call backend APIs; it should not read dataset files directly.
+
+## Documentation Rules
+
+- Keep `README.md`, `docs/PROGRESS.md`, `docs/DECISIONS.md`, and
+  `docs/RUN_TESTS.md` consistent with the implemented code.
+- Distinguish agreed target behavior from current implementation behavior.
+- Describe review selection as seeded random sampling only while the loader and
+  request cap continue to enforce that behavior.
+- Record unresolved implementation deviations in `PROJECT_AUDIT.md`.
 
 ## Data Rules
 

@@ -4,6 +4,11 @@
 **Component:** Data Pipeline (`loader.py`, `matching.py`, `preprocessor.py`)  
 **Date:** June 2026
 
+> **Historical component report, reviewed 2026-07-14.** The implementation now
+> supports an optional SQLite index, seeded random raw/SQLite sampling, and a
+> validated request-level cap. Current project findings are in
+> [`PROJECT_AUDIT.md`](PROJECT_AUDIT.md).
+
 ---
 
 ## 1. Overview
@@ -21,11 +26,15 @@ The original project brief specified a data pipeline responsible for loading the
 
 **Implementation:**  
 The system returns a variable number of results depending on match score:
-- If the highest score is **100 (exact match)**: all businesses with score 100 are returned, sorted by `review_count` descending.
+- If the highest score is **100 (exact match)**: score-100 businesses from the
+  matcher candidate result are returned, sorted by `review_count` descending.
 - If the highest score is **below 100**: top 3 candidates are returned, sorted by score then `review_count`.
 
 **Reason:**  
-A restaurant chain such as McDonald's may have dozens of branches in the dataset, all sharing the same name and therefore all scoring 100. Arbitrarily limiting to 3 would hide valid options from the user. Returning all exact matches gives the user full visibility to select the correct branch.
+A restaurant chain such as McDonald's may have dozens of branches in the dataset,
+all sharing the same name and therefore all scoring 100. Exact matches are not
+limited by `top_n`, but RapidFuzz extraction currently has `limit=50`; this is
+not literally every matching branch.
 
 ---
 
@@ -107,7 +116,11 @@ The full file is consumed by the Orchestrator and downstream agents that require
 The cap is set to **100 reviews** via the `MAX_REVIEW_SAMPLE` environment variable in `.env`.
 
 **Reason:**  
-During development and testing, 100 reviews provides sufficient data for the Analysis Agent to identify patterns while keeping LLM API costs and processing time manageable. The cap is configurable via `.env` and can be raised to 500 for production deployment without any code changes.
+During development and testing, 100 reviews provides sufficient data for the
+Analysis Agent while bounding LLM cost. The current cap is configured through
+`MAX_REVIEW_SAMPLE`, but the binding project decision keeps the maximum at 100.
+The loader sorts candidates by review ID and samples with `RANDOM_SEED`, making
+selection reproducible across raw JSON and SQLite for the same inputs.
 
 ---
 
@@ -118,7 +131,8 @@ During development and testing, 100 reviews provides sufficient data for the Ana
 | `app/data/matching.py` | Fuzzy search logic, pre-filtering, deduplication, sorting |
 | `app/data/loader.py` | File I/O, business cache, review extraction |
 | `app/data/preprocessor.py` | DataFrame cleaning, schema validation, type enforcement |
-| `tests/test_data_pipeline.py` | End-to-end test with user interaction and file output |
+| `tests/test_data_pipeline.py` | Mocked interactive data-flow test and file output |
+| `scripts/build_db.py` | One-time raw JSON to SQLite index builder |
 
 ---
 
@@ -142,14 +156,16 @@ This schema is frozen. Any changes require team agreement as downstream agents (
 
 | Variable | Default | Description |
 |---|---|---|
-| `YELP_BUSINESS_PATH` | `backend/data/raw/business.json` | Path to business dataset |
-| `YELP_REVIEW_PATH` | `backend/data/raw/review.json` | Path to review dataset |
+| `YELP_BUSINESS_PATH` | `backend/data/raw/yelp_academic_dataset_business.json` | Path to business dataset |
+| `YELP_REVIEW_PATH` | `backend/data/raw/yelp_academic_dataset_review.json` | Path to review dataset |
+| `YELP_DB_PATH` | `backend/data/processed/yelp.db` | Optional SQLite index |
 | `MAX_REVIEW_SAMPLE` | `100` | Maximum reviews to extract per business |
-| `RANDOM_SEED` | `42` | Seed for reproducibility |
+| `RANDOM_SEED` | `42` | Seed for reproducible random review selection |
 
 
-chạy chương trình cho người mới pull
-### 5.1 Build the SQLite index (one-time, after pulling)
+## 6. Setup after pulling
+
+### 6.1 Build the SQLite index (one-time, after pulling)
 
 The raw `.json` files and the generated SQLite database are **git-ignored** (too
 large for git), so each teammate builds the index locally from their own copy of
@@ -169,9 +185,13 @@ the dataset.
    `businesses` table indexed by `business_id`.
 
 After this, `loader.load_reviews` queries the index (a few **milliseconds**)
-instead of scanning the raw file (~**52 seconds**). Once built, you may delete the
+instead of scanning the raw file. The 2026-07-14 audit measured **77.48 seconds**
+without the index. Once built, you may delete the
 raw `.json` files to reclaim disk — the app reads everything from the DB.
 
 > Fallback: if `yelp.db` is missing but the raw `.json` files are present, the app
 > still works by scanning the files directly (just slower). If neither is present,
 > there is no data to analyse. Override the DB location with `YELP_DB_PATH`.
+
+Known build limitation: the DB is written directly to its final path. An
+interrupted build can leave a partial file that the loader treats as available.

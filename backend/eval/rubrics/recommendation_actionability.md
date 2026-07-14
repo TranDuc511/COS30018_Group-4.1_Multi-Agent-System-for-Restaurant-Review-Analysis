@@ -1,5 +1,7 @@
 # Rubric: Recommendation Actionability (Tier 3)
 
+_Reviewed 2026-07-14. Use only after Tier 1 traceability checks pass._
+
 Scores each `Recommendation` in `strategy.json` for how actionable it is for a
 restaurant operator. Judge with a model different from the one that produced it.
 
