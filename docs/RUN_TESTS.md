@@ -42,8 +42,8 @@ python -m pytest tests/test_e2e_pipeline.py -v -m integration
 
 Verified on 2026-07-14:
 
-- 73 collected;
-- 67 offline tests passed;
+- 77 collected;
+- 71 offline tests passed;
 - 6 live tests deselected.
 
 The live tests use the provider/model from `.env`. Do not label them Gemini,
@@ -58,6 +58,7 @@ GPT, Groq, or another provider without recording the actual configuration used.
 | `test_analysis_agent.py` | analysis and reasoning validation/retries | Mocked |
 | `test_strategy_agent.py` | strategy behavior and retries | Mocked |
 | `test_report_agent.py` | report behavior and retries | Mocked |
+| `test_api.py` | FastAPI report/SSE contracts and trusted metadata | No |
 | `test_orchestrator*.py` | retry/skip/halt, provider fallback, chained failures | No |
 | `test_graph.py` | happy-path graph wiring | Mocked |
 | `test_eval_tier1.py` | deterministic evaluator regressions | No |
@@ -66,11 +67,9 @@ GPT, Groq, or another provider without recording the actual configuration used.
 
 Known coverage gaps:
 
-- no endpoint-level FastAPI `TestClient` coverage;
-- no SSE integration test;
 - no real 5.34 GB raw-loader performance regression;
 - no SQLite-builder or partial-DB test;
-- no frontend test or lint script;
+- no frontend component interaction, accessibility, or lint test;
 - no CI workflow.
 
 ## Evaluation
@@ -149,9 +148,15 @@ Production build:
 npm run build
 ```
 
-Verified on 2026-07-14: build passed.
+Frontend HTTP/SSE client tests:
 
-There is currently no frontend test or lint command.
+```powershell
+npm test
+```
+
+Verified on 2026-07-14: 2 client tests and the production build passed. The
+client suite covers search/report requests, SSE parsing, and connection errors;
+it does not exercise React component interactions or accessibility.
 
 ## Interpretation Rules
 

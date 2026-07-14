@@ -9,13 +9,13 @@ _Last verified: 2026-07-14._
 | Data loading and matching | Working with gaps | RapidFuzz and raw/SQLite paths work; no fuzzy threshold |
 | Review selection | Working | Seeded random raw/SQLite sampling; request cap validated and applied |
 | Preprocessing | Working | Cleans the five-column review contract |
-| Analysis agent | Working with contract gap | Batched LLM path; batch count/ID equality not enforced |
+| Analysis agent | Working | Batched outputs must match input review IDs and order |
 | Reasoning agent | Working | Structured patterns and root causes |
 | Strategy agent | Working | LLM and deterministic modes |
-| Report agent | Working with provenance gap | Model may alter trusted business/sample metadata |
+| Report agent | Working | Business/sample metadata is overwritten from validated input |
 | LangGraph pipeline | Working | Chained-failure and recovery-provider regressions pass |
-| FastAPI | Working | Health, search, report, and SSE endpoints |
-| Frontend | Working with state/a11y gaps | Dashboard and Pipeline Monitor are API-bound |
+| FastAPI | Working | Health, search, report, and SSE endpoints; POST/SSE regressions pass |
+| Frontend | Working with state/a11y gaps | Dashboard and Pipeline Monitor are API-bound; client tests pass |
 | SQLite support | Implemented, not built locally | Raw fallback measured at 77.48 seconds |
 | Evaluation | Partially complete | Tier 1 works; Tier 2 labels and live Tier 3 remain |
 | Public deployment | Not ready | No auth, rate limiting, restricted CORS, or cost control |
@@ -24,9 +24,10 @@ _Last verified: 2026-07-14._
 
 - Python: 3.10.19.
 - Backend dependencies: `pip check` passed.
-- Backend collection: 73 tests.
-- Offline backend suite: 67 passed.
+- Backend collection: 77 tests.
+- Offline backend suite: 71 passed.
 - Live integration tests: 6 deselected.
+- Frontend API-client suite: 2 passed.
 - Tier 1 fixture: 16/16 checks passed.
 - Synthetic degradation harness: 6/6 scenarios passed.
 - Frontend: production build passed, 68.13 kB gzip JavaScript.
@@ -49,15 +50,15 @@ in-memory sample; it does not validate the Yelp loader or FastAPI endpoint.
 - Offline evaluation fixture and regression tests.
 - Current-agent recovery metadata, two graph retries, and deterministic
   provider-failure fallback.
+- Exact analysis-batch ID/order validation with normal self-correction retries.
+- Trusted report metadata plus FastAPI POST/SSE and frontend HTTP/SSE regressions.
 
 ## Blocking Defects
 
-1. Batch outputs are not checked against input review IDs/count.
-2. Report identity/sample metadata is model-controlled.
-3. Binding model decision, code defaults, example config, and local config differ.
-4. Local SQLite index is absent.
-5. Fuzzy matching has no minimum acceptance threshold.
-6. API, frontend workflow, and CI coverage remain incomplete.
+1. Binding model decision, code defaults, example config, and local config differ.
+2. Local SQLite index is absent.
+3. Fuzzy matching has no minimum acceptance threshold or ID/name consistency check.
+4. Real-data, component UI, accessibility, and CI coverage remain incomplete.
 
 Full evidence: [PROJECT_AUDIT.md](../PROJECT_AUDIT.md).
 
@@ -74,10 +75,10 @@ Full evidence: [PROJECT_AUDIT.md](../PROJECT_AUDIT.md).
 
 ## Next Work Order
 
-1. Enforce cross-record/provenance invariants.
-2. Align model/provider configuration with `AGENTS.md`.
-3. Build and validate SQLite atomically.
-4. Add API, frontend, and CI checks.
+1. Align model/provider configuration with `AGENTS.md`.
+2. Build and validate SQLite atomically.
+3. Add business identity/match validation.
+4. Add real-data, component UI, accessibility, and CI checks.
 5. Complete human and live evaluation.
 
 ## Demo Gate

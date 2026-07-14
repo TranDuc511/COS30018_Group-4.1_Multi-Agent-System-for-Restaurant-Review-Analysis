@@ -18,7 +18,7 @@ The cap is configurable and can be reduced per request.
 | LangGraph orchestration | Implemented; chained-failure recovery regression passes |
 | FastAPI | Working: health, business search, report, and SSE progress endpoints |
 | React frontend | Working dashboard and pipeline monitor |
-| Offline tests | 67 passed on 2026-07-14 |
+| Offline tests | 71 backend and 2 frontend passed on 2026-07-14 |
 | Live integration tests | 6 collected; not rerun during the 2026-07-14 audit |
 | Evaluation | Tier 1 and degradation checks runnable; Tier 2 labels and live Tier 3 pending |
 | Local SQLite index | Not built in the audited checkout |
@@ -311,16 +311,17 @@ python -m pytest -m "not integration"
 
 Verified on 2026-07-14:
 
-- 73 tests collected;
-- 67 offline tests passed;
+- 77 backend tests collected;
+- 71 offline backend tests passed;
 - 6 live integration tests deselected;
+- 2 frontend API-client tests passed;
 - Tier 1 fixture passed 16/16 checks;
 - degradation harness passed 6/6 synthetic scenarios;
 - frontend production build passed.
 
 The live E2E test uses four in-memory reviews. It validates real model and graph
-wiring, not the raw Yelp path or FastAPI boundary. Request-model validation is
-covered, but endpoint-level API, frontend, and CI workflow tests are absent.
+wiring, not the raw Yelp path. Offline regressions now cover FastAPI POST/SSE and
+the frontend HTTP/SSE client; real-dataset, component UI, and CI checks remain.
 
 See [docs/RUN_TESTS.md](docs/RUN_TESTS.md).
 
@@ -367,9 +368,9 @@ No CI workflow currently runs these checks automatically.
 | --- | --- |
 | Scope and contracts | Complete |
 | Components and self-correction | Complete |
-| Full pipeline and API wiring | Implemented; remaining P1 contract gaps |
+| Full pipeline and API wiring | Implemented; contract and API boundary regressions pass |
 | Evaluation framework | Implemented; human/live evaluation incomplete |
-| Demo readiness | Blocked by model-config, DB-index, and provenance issues |
+| Demo readiness | Blocked by model-config, DB-index, and business-identity issues |
 
 ## 15. Priority Risks
 
@@ -377,10 +378,11 @@ No CI workflow currently runs these checks automatically.
 | --- | --- | --- |
 | Resolved P0 | Seeded random sampling and request cap | Raw/SQLite/API regression coverage passes |
 | Resolved P0 | Chained recovery state | Current-agent and provider-fallback regressions pass |
-| P1 | Schema-valid output may be incomplete or misidentified | Enforce cross-record and trusted metadata invariants |
+| Resolved P1 | Schema-valid output may be incomplete or misidentified | Exact batch IDs/order and trusted report metadata regressions pass |
+| Resolved P1 | API/frontend production boundaries lack tests | FastAPI POST/SSE and frontend HTTP/SSE client regressions pass |
+| P1 | Business ID/name consistency and fuzzy acceptance remain weak | Add identity validation and an approved threshold |
 | P1 | Provider/model sources disagree | Select one approved configuration and record it in evaluations |
 | P1 | Missing local SQLite index causes minute-scale scans | Build and validate the index before demos |
-| P1 | API/frontend production boundaries lack tests | Add minimal API, data-index, and UI workflow checks |
 
 ## 16. Project Documentation
 

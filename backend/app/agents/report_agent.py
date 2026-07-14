@@ -126,6 +126,8 @@ class ReportAgent(BaseAgent):
         )
 
         if result is not None:
+            result["business_name"] = input_data["business_name"]
+            result["sample_size"] = input_data["sample_size"]
             return result
 
         return AgentError(

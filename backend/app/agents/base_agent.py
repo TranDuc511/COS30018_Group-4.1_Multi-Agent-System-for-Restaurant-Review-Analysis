@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -84,6 +85,7 @@ class BaseAgent(ABC):
         initial_messages: list[dict],
         schema_model: type[BaseModel],
         original_task: str,
+        result_validator: Callable[[dict], None] | None = None,
     ) -> tuple[dict | None, str | None, str | None, int]:
         """Returns (result, error_detail, error_type, attempts_made)."""
         messages = list(initial_messages)
@@ -103,8 +105,11 @@ class BaseAgent(ABC):
             try:
                 parsed = json.loads(last_raw)
                 validated = schema_model.model_validate(parsed)
-                return validated.model_dump(), None, None, attempt
-            except (json.JSONDecodeError, ValidationError) as exc:
+                result = validated.model_dump()
+                if result_validator:
+                    result_validator(result)
+                return result, None, None, attempt
+            except (json.JSONDecodeError, ValidationError, ValueError) as exc:
                 last_error = str(exc)
                 last_error_type = "schema_validation_error"
                 if attempt < self.MAX_RETRIES:

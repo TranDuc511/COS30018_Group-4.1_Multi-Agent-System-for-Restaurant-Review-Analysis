@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.agents.analysis_agent import AnalysisAgent, analyse_review
+from app.agents.analysis_agent import AnalysisAgent, analyse_review, analyse_reviews
 from app.agents.reasoning_agent import ReasoningAgent, reason_over_reviews
 from app.schemas.contracts import AgentError, AnalysisOutput, ReasoningOutput
 from tests.mock_data import (
@@ -100,6 +100,30 @@ class TestAnalysisAgent:
         assert result["recoverable"] is False  # agent exhausted all options
         assert "connection timeout" in result["error_detail"]
         AgentError.model_validate(result)
+
+    @patch(PATCH_TARGET)
+    def test_batch_retries_until_review_ids_match_input_order(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        valid = {
+            "analyses": [
+                {**MOCK_ANALYSIS_OUTPUT, "review_id": "r1"},
+                {**MOCK_ANALYSIS_OUTPUT_POSITIVE, "review_id": "r2"},
+            ]
+        }
+        mock_client.chat.completions.create.side_effect = [
+            make_llm_response({"analyses": valid["analyses"][:1]}),
+            make_llm_response({"analyses": list(reversed(valid["analyses"]))}),
+            make_llm_response(valid),
+        ]
+
+        result = analyse_reviews([
+            {**MOCK_REVIEW, "review_id": "r1"},
+            {**MOCK_REVIEW_POSITIVE, "review_id": "r2"},
+        ])
+
+        assert [item["review_id"] for item in result] == ["r1", "r2"]
+        assert mock_client.chat.completions.create.call_count == 3
 
 
 # ── Reasoning Agent ───────────────────────────────────────────────────────────

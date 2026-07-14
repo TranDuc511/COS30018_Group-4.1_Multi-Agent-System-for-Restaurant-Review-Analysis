@@ -199,6 +199,21 @@ def test_generate_report_llm_retries_invalid_output_then_succeeds(monkeypatch):
     ReportOutput.model_validate(result)
 
 
+def test_generate_report_overwrites_model_metadata(monkeypatch):
+    monkeypatch.setattr("app.agents.report_agent._load_environment", lambda: None)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    wrong_metadata = {**REPORT_OUTPUT, "business_name": "Wrong", "sample_size": 999}
+
+    with patch(PATCH_TARGET) as mock_openai_cls:
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = make_llm_response(wrong_metadata)
+        result = generate_report(REPORT_PAYLOAD, use_llm=True)
+
+    assert result["business_name"] == REPORT_PAYLOAD["business_name"]
+    assert result["sample_size"] == REPORT_PAYLOAD["sample_size"]
+
+
 def test_generate_report_llm_exhausted_retries_returns_agent_error(monkeypatch):
     monkeypatch.setattr("app.agents.report_agent._load_environment", lambda: None)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")

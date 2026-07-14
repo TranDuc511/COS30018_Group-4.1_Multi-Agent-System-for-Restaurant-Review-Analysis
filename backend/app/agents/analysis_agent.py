@@ -76,8 +76,17 @@ class AnalysisAgent(BaseAgent):
             {"role": "user", "content": original_task},
         ]
 
+        expected_ids = [str(review["review_id"]) for review in reviews]
+
+        def validate_batch(output: dict) -> None:
+            actual_ids = [analysis["review_id"] for analysis in output["analyses"]]
+            if actual_ids != expected_ids:
+                raise ValueError(
+                    f"analysis review IDs must equal input order: expected {expected_ids}, got {actual_ids}"
+                )
+
         result, error, error_type, attempts = self._run_with_retry(
-            messages, AnalysisBatchOutput, original_task
+            messages, AnalysisBatchOutput, original_task, validate_batch
         )
 
         if result is not None:

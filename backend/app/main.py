@@ -73,6 +73,21 @@ def _build_analysis_summary(analysis_results: list[dict]) -> dict[str, Any]:
     return {"sentiment_counts": sentiment_counts, "aspect_counts": aspect_counts}
 
 
+def _build_report_response(
+    state: dict[str, Any], business_name: str, sample_size: int
+) -> dict[str, Any]:
+    report = state["report_output"]
+    analysis_results = state.get("analysis_results") or []
+    reasoning = state.get("reasoning_output") or {}
+    return {
+        **report,
+        "business_name": business_name,
+        "sample_size": sample_size,
+        "analysis_summary": _build_analysis_summary(analysis_results),
+        "reasoning_summary": {"patterns": reasoning.get("patterns", [])},
+    }
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -137,14 +152,7 @@ def create_report(request: ReportRequest):
         raise HTTPException(status_code=500, detail=detail)
 
     # 5. Augment with computed summaries that the frontend expects.
-    analysis_results = state.get("analysis_results") or []
-    reasoning = state.get("reasoning_output") or {}
-
-    return {
-        **report,
-        "analysis_summary": _build_analysis_summary(analysis_results),
-        "reasoning_summary": {"patterns": reasoning.get("patterns", [])},
-    }
+    return _build_report_response(state, business_name, len(df))
 
 
 @app.get("/api/reports/stream")
@@ -232,13 +240,7 @@ def stream_report(
                 yield sse({"type": "error", "stage": "report_agent", "detail": detail})
                 return
 
-            analysis_results = final_state.get("analysis_results") or []
-            reasoning = final_state.get("reasoning_output") or {}
-            full_report = {
-                **report,
-                "analysis_summary": _build_analysis_summary(analysis_results),
-                "reasoning_summary": {"patterns": reasoning.get("patterns", [])},
-            }
+            full_report = _build_report_response(final_state, best["name"], len(df))
             yield sse({"type": "done", "report": full_report})
         except Exception as exc:  # surface any unexpected failure to the client
             yield sse({"type": "error", "detail": str(exc)})

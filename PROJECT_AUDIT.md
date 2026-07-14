@@ -1,7 +1,7 @@
 # Project Strengths and Weaknesses Audit
 
 **Audit date:** 2026-07-14
-**Last updated:** 2026-07-14 after P0 remediation
+**Last updated:** 2026-07-14 after P1 contract and API/frontend boundary remediation
 **Scope:** backend, data pipeline, LangGraph recovery, schemas, FastAPI,
 frontend, tests, evaluation, configuration, and documentation.
 
@@ -9,17 +9,18 @@ frontend, tests, evaluation, configuration, and documentation.
 
 The repository is a solid course prototype with clear architecture, structured
 LLM outputs, a working API/frontend path, and strong deterministic evaluation.
-The two original P0 defects are fixed and regression-tested. Remaining P1
-contract, identity, model-configuration, and data-index risks still block a
-production-reliability claim.
+The two original P0 defects and the scoped contract/API/frontend P1 defects are
+fixed and regression-tested. Remaining business-identity, model-configuration,
+data-index, real-data, component, and CI risks still block a production claim.
 
 ## Verification Snapshot
 
 - Git worktree was clean before the documentation update.
 - Python 3.10.19 environment passed `pip check`.
-- 73 backend tests collected.
-- 67 offline backend tests passed.
+- 77 backend tests collected.
+- 71 offline backend tests passed.
 - 6 live integration tests were deselected.
+- 2 frontend API-client tests passed.
 - Tier 1 fixture passed 16/16 checks.
 - Synthetic degradation harness passed 6/6 scenarios.
 - Frontend production build passed; JavaScript bundle was 68.13 kB gzip.
@@ -132,24 +133,28 @@ stages halt and exhausted non-critical stages skip.
 A regression reproduces consecutive reasoning and strategy failures, verifies
 the correct error detail for each stage, and terminates with the intended skip.
 
+## Resolved P1 Findings
+
+### Resolved P1: Cross-record and trusted metadata invariants
+
+Analysis batch output now enters the normal self-correction path unless its
+review IDs exactly equal the input IDs in the original order. This enforces
+count, equality, ordering, and duplicate detection without a second retry loop.
+
+Report business name and sample size are overwritten from validated report
+input, and the POST/SSE response builders overwrite them again from application
+business input and preprocessed sample state. Business ID/name consistency is a
+separate unresolved finding. Regressions cover incomplete/reordered batches and
+wrong model-generated report metadata.
+
+### Resolved P1: API/frontend client boundaries
+
+Offline FastAPI `TestClient` regressions cover POST report responses, SSE event
+delivery, and trusted final metadata. Node's built-in test runner covers frontend
+search/report requests, SSE parsing, URL encoding, and connection-error closure.
+No frontend testing dependency was added.
+
 ## Remaining Weaknesses
-
-### P1: Contracts validate shape, not provenance
-
-`AnalysisBatchOutput` accepts empty or short result lists. Runtime code does not
-verify:
-
-- one output per review;
-- exact review-ID equality;
-- original ordering;
-- no duplicates.
-
-`ReportOutput` accepts any non-empty business identity and non-negative sample
-size. The API trusts model-generated metadata instead of overwriting it from
-server state.
-
-**Impact:** schema-valid output can still describe an incomplete set or wrong
-restaurant.
 
 ### P1: Business identity and matching are weak at the API boundary
 
@@ -179,15 +184,13 @@ LLM processing.
 `build_db.py` writes to the final path and commits intermediate tables. An
 interrupted build can leave a partial DB that the loader treats as valid.
 
-### P1: Production boundaries lack tests
+### P1: Data, component, and CI boundaries lack tests
 
 Missing automated coverage:
 
-- FastAPI endpoint request/response behavior;
-- SSE behavior;
 - real-dataset raw-loader behavior and performance;
 - SQLite builder and partial DB handling;
-- frontend workflows;
+- frontend component interactions;
 - accessibility;
 - CI execution.
 
@@ -227,12 +230,10 @@ frontend status, SQLite support, providers, test counts, and evaluation status.
 
 ## Minimum Repair Order
 
-1. Enforce exact batch count and review-ID equality.
-2. Overwrite report identity/sample metadata from trusted pipeline state.
-3. Add a fuzzy-match threshold and validate business ID/name consistency.
-4. Select one approved model configuration and record provider/model per run.
-5. Build SQLite atomically and validate schema/completeness before use.
-6. Add minimal API, data-index, frontend workflow, and CI checks.
+1. Add a fuzzy-match threshold and validate business ID/name consistency.
+2. Select one approved model configuration and record provider/model per run.
+3. Build SQLite atomically and validate schema/completeness before use.
+4. Add real-data, frontend component, accessibility, and CI checks.
 
 ## Demo Readiness Gate
 
