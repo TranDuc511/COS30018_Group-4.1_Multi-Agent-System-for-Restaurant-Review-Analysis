@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from app.agents.base_agent import BaseAgent
+from app.core import llm_config
 from app.schemas.contracts import AgentError, ReportGeneratorInput, ReportOutput
 
 _REPORT_TITLE = "Restaurant Review Analysis Report"
@@ -46,7 +47,7 @@ def _load_environment() -> None:
 def _candidate_models() -> list[str]:
     return [
         os.getenv("OPENAI_MODEL", "gemini-2.5-flash"),
-        os.getenv("OPENAI_FALLBACK_MODEL", "gemini-2.5-flash"),
+        os.getenv("OPENAI_FALLBACK_MODEL", "gemini-3.5-flash"),
     ]
 
 
@@ -151,7 +152,7 @@ def generate_report(payload: dict, use_llm: bool = True) -> dict:
 
     if use_llm:
         _load_environment()
-        if not os.getenv("OPENAI_API_KEY"):
+        if not llm_config.is_configured():
             return _error("OPENAI_API_KEY is not set.")
         return _llm_report(payload)
 

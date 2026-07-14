@@ -6,6 +6,8 @@ from collections.abc import Callable
 
 from dotenv import load_dotenv
 from openai import OpenAI
+
+from app.core import llm_config
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -43,12 +45,9 @@ class BaseAgent(ABC):
         cls.total_tokens_used = 0
 
     def __init__(self) -> None:
-        self._client = OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("OPENAI_BASE_URL"),
-        )
-        self._model = os.getenv("OPENAI_MODEL", "gemini-2.5-flash")
-        self._fallback_model = os.getenv("OPENAI_FALLBACK_MODEL", "gemini-2.5-flash")
+        self._client = OpenAI(**llm_config.client_kwargs())
+        self._model = llm_config.primary_model()
+        self._fallback_model = llm_config.fallback_model()
 
     def _record_usage(self, resp) -> None:
         usage = getattr(resp, "usage", None)

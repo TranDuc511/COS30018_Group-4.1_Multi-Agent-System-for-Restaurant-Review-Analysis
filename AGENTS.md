@@ -21,9 +21,15 @@ Read this before changing the project structure or implementation plan.
 
 These decisions are already agreed for the current plan:
 
-- Use `gpt-5.4` as the primary model for LLM-powered agents.
-- Use `gpt-5.4-mini` as the fallback model when the primary model is unavailable.
-- If the account does not have access to those models, use `gpt-5` and `gpt-5-mini`.
+- Use `gemini-2.5-flash` as the primary model for LLM-powered agents,
+  reached through Gemini's OpenAI-compatible endpoint.
+- Use `gemini-3.5-flash` as the fallback model when the primary is unavailable.
+- This approved configuration is recorded per run in the evaluation dump
+  (`_summary.json -> run_config`). See docs/DECISIONS.md (2026-07-14).
+- The agents are provider-agnostic (OpenAI-compatible endpoint chosen by env),
+  so the same code also runs on a **local** LLM via Ollama
+  (`backend/.env.local.example`), satisfying the local-and-cloud requirement.
+  See docs/LOCAL_LLM.md.
 - Randomly sample up to 100 review records per selected restaurant.
 - Do not claim that the system analyses every review in the Yelp dataset.
 - Agent self-correction retry limit is 2.

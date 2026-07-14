@@ -8,7 +8,8 @@ pipeline run and its scoring stay decoupled.
 > **STATUS: implemented, last verified 2026-07-14.** All four modules are functional; the
 > committed fixture (`fixtures/sample_dump/`) lets Tier 1 run fully offline.
 > Outstanding: hand-label `gold/analysis_gold.jsonl` for Tier 2, and run Tier 1b
-> / Tier 3 live against the approved provider. Tier 1 passed 16/16 checks and
+> / Tier 3 live against the approved provider (cloud Gemini or local Ollama - the
+> resolved provider/model is recorded in each dump's `run_config`). Tier 1 passed 16/16 checks and
 > the synthetic degradation harness passed 6/6 scenarios on 2026-07-14.
 
 ## Layout
@@ -62,7 +63,8 @@ python -m eval.tier3_judge out/                              # Tier 3
 ## Remaining work
 
 1. Human-label the Tier 2 worksheet, ideally with a second annotator.
-2. Run latency/cost checks with the SQLite index and approved provider.
+2. Run latency/cost checks with the SQLite index and the approved provider
+   (cloud or local; recorded in each dump's `run_config`).
 3. Run Tier 3 against a real dump with an independent judge.
 4. Add a CI workflow for Tier 1 and the offline test suite.
 

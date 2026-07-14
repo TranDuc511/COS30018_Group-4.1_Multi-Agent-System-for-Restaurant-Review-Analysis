@@ -160,16 +160,32 @@ The CLI, API, and live pipeline test reuse the production nodes in
 
 ## 7. Models and Provider Configuration
 
-[AGENTS.md](AGENTS.md) remains authoritative:
+**Approved configuration (single source of truth):**
 
-- primary target: `gpt-5.4`;
-- fallback target: `gpt-5.4-mini`;
-- substitutes without access: `gpt-5` and `gpt-5-mini`.
+- provider: Google Gemini via its OpenAI-compatible endpoint
+  (`OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`);
+- primary model: `gemini-2.5-flash`;
+- fallback model: `gemini-3.5-flash`.
 
-Current code and `.env.example` default to Gemini 2.5 Flash through an
-OpenAI-compatible API. Local `.env` files may override provider and model.
-This configuration drift is unresolved; evaluation results must record the
-actual provider and model used.
+This is the configuration the code and `.env.example` default to, and it is
+recorded per run in every evaluation dump (`_summary.json -> run_config`), so
+results are always attributable to a known provider/model.
+
+**Local profile (Ollama).** The Option-D requirement to run the agents on a
+locally-deployed LLM is satisfied by a second profile
+(`backend/.env.local.example`): Ollama's OpenAI-compatible endpoint on
+`localhost:11434` with e.g. `llama3.1`. The provider is selected entirely by
+environment variables - resolved centrally in
+[`app/core/llm_config.py`](backend/app/core/llm_config.py) - so switching
+between local and cloud is a `.env` change, not a code change, and no real API
+key is needed for the local runtime. Full setup, run, and verification steps are
+in [docs/LOCAL_LLM.md](docs/LOCAL_LLM.md).
+
+The recorded `run_config` always reflects what actually ran
+(`ollama-local (openai-compatible)` vs `google-gemini (openai-compatible)`), so
+local and cloud evaluation results stay attributable. See
+[docs/DECISIONS.md](docs/DECISIONS.md) (2026-07-14 entries) for the rationale
+that superseded the earlier GPT-5.4 target and added the local profile.
 
 ## 8. Structured Contracts
 
@@ -381,7 +397,7 @@ No CI workflow currently runs these checks automatically.
 | Resolved P1 | Schema-valid output may be incomplete or misidentified | Exact batch IDs/order and trusted report metadata regressions pass |
 | Resolved P1 | API/frontend production boundaries lack tests | FastAPI POST/SSE and frontend HTTP/SSE client regressions pass |
 | P1 | Business ID/name consistency and fuzzy acceptance remain weak | Add identity validation and an approved threshold |
-| P1 | Provider/model sources disagree | Select one approved configuration and record it in evaluations |
+| Resolved P1 | Provider/model sources disagreed | Approved config (gemini-2.5-flash primary / gemini-3.5-flash fallback) set everywhere and recorded in eval `run_config` |
 | P1 | Missing local SQLite index causes minute-scale scans | Build and validate the index before demos |
 
 ## 16. Project Documentation

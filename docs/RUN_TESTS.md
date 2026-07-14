@@ -12,7 +12,11 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Fill `.env` with a real key and approved provider/model configuration. Never
+Fill `.env` with a real key and the approved provider/model configuration
+(cloud Gemini: `gemini-2.5-flash` primary / `gemini-3.5-flash` fallback). To run
+the agents against a **local** LLM instead, copy `backend/.env.local.example`
+(Ollama; no API key required) - see [LOCAL_LLM.md](LOCAL_LLM.md). The
+provider/model actually used is recorded in each dump's `run_config`. Never
 commit `.env`.
 
 This machine also has a verified interpreter:
@@ -40,14 +44,16 @@ python -m pytest -m integration
 python -m pytest tests/test_e2e_pipeline.py -v -m integration
 ```
 
-Verified on 2026-07-14:
+Verified on 2026-07-14 (after adding the local/cloud provider profiles):
 
-- 77 collected;
-- 71 offline tests passed;
-- 6 live tests deselected.
+- 87 collected;
+- 81 offline tests passed (includes 10 new `test_llm_config.py` tests);
+- 6 live tests deselected (run only when a reachable provider is configured).
 
-The live tests use the provider/model from `.env`. Do not label them Gemini,
-GPT, Groq, or another provider without recording the actual configuration used.
+The live tests use the provider/model from `.env` (cloud Gemini or local
+Ollama). Do not label them Gemini, GPT, Groq, or another provider without
+recording the actual configuration used - the dump's `run_config` records it
+exactly.
 
 ## Test Scope
 
@@ -58,6 +64,7 @@ GPT, Groq, or another provider without recording the actual configuration used.
 | `test_analysis_agent.py` | analysis and reasoning validation/retries | Mocked |
 | `test_strategy_agent.py` | strategy behavior and retries | Mocked |
 | `test_report_agent.py` | report behavior and retries | Mocked |
+| `test_llm_config.py` | provider/model resolution: local (Ollama) vs cloud, placeholder key, run_config label | No |
 | `test_api.py` | FastAPI report/SSE contracts and trusted metadata | No |
 | `test_orchestrator*.py` | retry/skip/halt, provider fallback, chained failures | No |
 | `test_graph.py` | happy-path graph wiring | Mocked |

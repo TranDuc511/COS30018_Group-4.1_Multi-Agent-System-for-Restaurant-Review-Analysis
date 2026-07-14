@@ -57,3 +57,5 @@ docs/
 backend/eval/**/tier1_report.json
 backend/eval/**/tier2_scores.json
 backend/eval/**/tier3_scores.json
+# Track the local (Ollama) env profile alongside .env.example
+!.env.local.example

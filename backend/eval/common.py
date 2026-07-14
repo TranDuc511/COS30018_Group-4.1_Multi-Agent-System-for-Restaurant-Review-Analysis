@@ -2,8 +2,9 @@
 
 A dump directory (produced by ``run_pipeline.py --dump-stages <dir>``) contains:
 
-    _summary.json   {business_name, business_id, pipeline_status,
+    _summary.json   {business_name, business_id, run_config, pipeline_status,
                      skipped_agents, failed_agent, errors, retry_counts}
+                    run_config = {provider, base_url, primary_model, fallback_model}
     analysis.json   list[AnalysisOutput]        (or null if the stage was skipped)
     reasoning.json  ReasoningOutput             (or null)
     strategy.json   StrategyOutput              (or null)

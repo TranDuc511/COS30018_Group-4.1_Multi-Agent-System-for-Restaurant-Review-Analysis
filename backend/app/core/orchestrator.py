@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 
+from app.core import llm_config
+
 load_dotenv()
 
 
@@ -24,8 +26,9 @@ class OrchestratorAgent:
     def _get_llm(self) -> ChatOpenAI:
         if self._llm is None:
             self._llm = ChatOpenAI(
-                model=os.getenv("OPENAI_MODEL", "gemini-2.5-flash"),
-                base_url=os.getenv("OPENAI_BASE_URL"),
+                model=llm_config.primary_model(),
+                base_url=llm_config.base_url() or None,
+                api_key=llm_config.api_key(),
                 temperature=0,
             )
         return self._llm

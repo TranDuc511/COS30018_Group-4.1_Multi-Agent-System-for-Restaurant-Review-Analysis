@@ -75,8 +75,11 @@ npm run build
 
 ## Known Implementation Deviations
 
-- `AGENTS.md` specifies the GPT-5.4 family; code/example defaults use Gemini,
-  while local `.env` may override both.
+- Model configuration is settled: `AGENTS.md`, code, and `.env.example` all use
+  the approved primary `gemini-2.5-flash` / fallback `gemini-3.5-flash`. A local
+  Ollama profile (`backend/.env.local.example`) is also supported for the
+  local-and-cloud requirement, and the run's actual config is recorded in the
+  eval dump `run_config` (see docs/DECISIONS.md and docs/LOCAL_LLM.md, 2026-07-14).
 - Batch analysis validation does not enforce exact input/output review IDs.
 - Report identity and sample size remain model-controlled.
 

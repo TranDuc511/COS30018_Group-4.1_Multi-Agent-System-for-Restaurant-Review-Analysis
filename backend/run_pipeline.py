@@ -21,6 +21,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from app.core import llm_config
 from app.core.pipeline import run_pipeline
 from app.data import loader, preprocessor
 
@@ -88,6 +89,17 @@ def _print_report(report: dict) -> None:
     print("=" * 70)
 
 
+def _run_config() -> dict:
+    """Approved provider/model configuration actually used for this run.
+
+    P1 resolution: one approved configuration (primary gemini-2.5-flash,
+    fallback gemini-3.5-flash via Gemini's OpenAI-compatible endpoint) is
+    recorded into every evaluation dump so results are attributable to a known
+    provider/model rather than to whatever a local .env happened to set.
+    """
+    return llm_config.run_config()
+
+
 def _dump_stages(final_state: dict, out_dir: str) -> None:
     """Write each agent phase's JSON output to <out_dir> for inspection/demo.
 
@@ -107,6 +119,7 @@ def _dump_stages(final_state: dict, out_dir: str) -> None:
     summary = {
         "business_name": final_state.get("business_name"),
         "business_id": final_state.get("business_id"),
+        "run_config": _run_config(),
         "pipeline_status": final_state.get("pipeline_status"),
         "skipped_agents": final_state.get("skipped_agents"),
         "failed_agent": final_state.get("failed_agent"),
@@ -144,8 +157,8 @@ def main() -> int:
     if args.sample_size is not None and not 1 <= args.sample_size <= loader.MAX_REVIEWS:
         parser.error(f"--sample-size must be between 1 and {loader.MAX_REVIEWS}")
 
-    if not os.getenv("OPENAI_API_KEY"):
-        print("OPENAI_API_KEY is not set - the agents need it to run. See RUN_TESTS.md.")
+    if not llm_config.is_configured():
+        print(llm_config.NOT_CONFIGURED_MESSAGE)
         return 1
 
     business_name = args.name or input("Restaurant name: ")

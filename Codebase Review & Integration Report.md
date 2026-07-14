@@ -62,7 +62,15 @@ The test asserted `top_n` caps results for an exact-match query, contradicting M
 
 ## 3. Configuration
 
-A local `backend/.env` was created using the OpenAI-compatible Groq endpoint, matching the model defaults already present in `base_agent.py`:
+> **Update (2026-07-14):** The approved configuration is now cloud **Gemini**
+> (`gemini-2.5-flash` primary / `gemini-3.5-flash` fallback) via the
+> OpenAI-compatible endpoint, with a supported **local Ollama** profile
+> (`backend/.env.local.example`). Provider/model is resolved centrally in
+> `app/core/llm_config.py` and recorded per run in the eval dump `run_config`.
+> The Groq setup below is retained for historical context only. See
+> `docs/DECISIONS.md` (2026-07-14) and `docs/LOCAL_LLM.md`.
+
+A local `backend/.env` was created using the OpenAI-compatible Groq endpoint, matching the model defaults present in `base_agent.py` *at the time of this review* (the defaults are now Gemini - see the update note above):
 
 | Variable | Value |
 |---|---|
@@ -92,6 +100,6 @@ The 5 deselected tests make real LLM API calls and are marked `integration`, con
   reads `MAX_REVIEW_SAMPLE` and `RANDOM_SEED` directly from the environment.
 
 The sampling and chained-recovery P0 defects were fixed on 2026-07-14. Current
-priorities are cross-record contract validation, provider/model drift, trusted
+priorities are cross-record contract validation, provider/model drift (resolved 2026-07-14), trusted
 report metadata, and the missing local SQLite index. See
 [`PROJECT_AUDIT.md`](PROJECT_AUDIT.md).

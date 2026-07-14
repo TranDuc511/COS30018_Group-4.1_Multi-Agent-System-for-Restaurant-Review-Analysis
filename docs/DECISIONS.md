@@ -6,6 +6,74 @@ an old one if a decision changes.
 
 ---
 
+## 2026-07-14 - Provider-agnostic LLM layer: support local (Ollama) and cloud (Gemini)
+
+**Decision:** Centralise provider/model resolution in
+`app/core/llm_config.py` and support two approved profiles selected purely by
+environment variables:
+
+- **Cloud (default):** Gemini OpenAI-compatible endpoint, `gemini-2.5-flash` /
+  `gemini-3.5-flash` (`backend/.env.example`).
+- **Local:** Ollama's OpenAI-compatible endpoint on `localhost:11434`, e.g.
+  `llama3.1` (`backend/.env.local.example`).
+
+`llm_config` detects a local endpoint, injects a placeholder credential (local
+runtimes need no key), and produces the provider label recorded in every
+evaluation dump. The agents (`base_agent`), the orchestrator, and the
+`report`/`strategy` "is-configured" guards all resolve credentials and models
+through this one module, so a run is fully local or fully cloud with no code
+change.
+
+**Why:** Option D requires demonstrating the agents on **both** a
+locally-deployed LLM and a cloud LLM. The LLM layer was already OpenAI-shaped
+(base-URL override + JSON `response_format`), so provider selection is a
+configuration concern, not a rewrite. Recording the resolved provider/model per
+run (see the run_config decision above) keeps local-vs-cloud evaluation results
+attributable.
+
+**Affects:** `app/core/llm_config.py` (new), `app/agents/base_agent.py`,
+`app/agents/report_agent.py`, `app/agents/strategy_agent.py`,
+`app/core/orchestrator.py`, `run_pipeline.py`, `backend/.env.local.example`
+(new), `.gitignore`, `tests/test_llm_config.py` (new), `README.md`, `AGENTS.md`,
+`docs/LOCAL_LLM.md` (new). Note: `response_format={"type":"json_object"}` relies
+on the local model honouring JSON mode; the two self-correction retries cover
+occasional malformed local output.
+
+---
+
+## 2026-07-14 - Approved model configuration: gemini-2.5-flash primary, gemini-3.5-flash fallback (resolves P1)
+
+**Decision:** Adopt **one** approved LLM configuration for all agents and the
+orchestrator recovery call: provider **Google Gemini** via its
+OpenAI-compatible endpoint, **primary `gemini-2.5-flash`**, **fallback
+`gemini-3.5-flash`**. The fallback is now a *distinct* model (previously the
+fallback slot pointed at the primary), restoring real fallback resilience.
+This configuration is the default in `base_agent.py`, `report_agent.py`,
+`strategy_agent.py`, `orchestrator.py` (primary) and `.env.example`.
+
+Every evaluation dump records the configuration actually used in
+`_summary.json -> run_config` = `{provider, base_url, primary_model,
+fallback_model}` (`run_pipeline.py::_run_config`), so evaluation provenance is
+unambiguous even when a local `.env` overrides the defaults.
+
+**Why:** Sources disagreed - `AGENTS.md`/`README` named GPT-5.4/GPT-5.4-mini as
+authoritative, the code and tracked example defaulted to Gemini 2.5 Flash (with
+an identical fallback), and an audited local environment used Groq-hosted Llama.
+Results were not reproducible and evaluation provenance was unclear (audit P1).
+Selecting one approved configuration and recording it per run resolves this.
+
+**Supersedes:** the 2026-07-14 "AGENTS.md remains authoritative" entry (GPT-5.4
+target) and the 2026-07-01 Gemini entry's same-model fallback slot.
+
+**Affects:** `app/agents/base_agent.py`, `app/agents/report_agent.py`,
+`app/agents/strategy_agent.py`, `.env.example`, `run_pipeline.py`,
+`eval/common.py`, `eval/fixtures/sample_dump/_summary.json`,
+`tests/test_strategy_agent.py`, `AGENTS.md`, `README.md`, `PROJECT_AUDIT.md`.
+Note: `eval/tier3_judge.py` still requires a `JUDGE_MODEL` distinct from the
+primary `OPENAI_MODEL` (default `gemini-2.5-pro`) to keep the judge unbiased.
+
+---
+
 ## 2026-07-14 - Treat LLM identity and cross-record metadata as untrusted
 
 **Decision:** Analysis batch output is accepted only when its review IDs exactly
@@ -25,6 +93,12 @@ tests.
 ---
 
 ## 2026-07-14 - AGENTS.md remains authoritative; deviations are not new decisions
+
+> **SUPERSEDED (2026-07-14):** the model-family portion of this entry no longer
+> holds - see the "Approved model configuration" entry above, which adopts
+> Gemini `gemini-2.5-flash` / `gemini-3.5-flash` (plus a local Ollama profile)
+> and updates `AGENTS.md` accordingly. The rest (seeded sampling, cap 100, two
+> retries, structured contracts) still stands.
 
 **Decision:** Keep the GPT-5.4 model family, seeded random sampling, maximum
 sample size 100, two self-correction retries, and structured status/error
@@ -206,10 +280,11 @@ git-ignored; only `.gitkeep` placeholders are committed.
 These were agreed before this log existed; recorded here for traceability. See
 [`AGENTS.md`](../AGENTS.md) §"Current Project Decisions" for the authoritative list.
 
-- **LLM models:** primary `gpt-5.4`, fallback `gpt-5.4-mini` (fall back to `gpt-5` /
-  `gpt-5-mini` without access). Configurable via `OPENAI_MODEL` /
-  `OPENAI_FALLBACK_MODEL`. Current `.env` uses Groq's OpenAI-compatible endpoint
-  with `llama-3.3-70b-versatile` / `llama-3.1-8b-instant`.
+- **LLM models (SUPERSEDED - see the 2026-07-14 approved-configuration entry
+  above):** originally primary `gpt-5.4`, fallback `gpt-5.4-mini`. The approved
+  configuration is now primary `gemini-2.5-flash`, fallback `gemini-3.5-flash`,
+  configurable via `OPENAI_MODEL` / `OPENAI_FALLBACK_MODEL` and recorded per run
+  in the eval dump `run_config`.
 - **Sampling:** randomly sample up to 100 reviews per restaurant; cap is
   configurable (`MAX_REVIEW_SAMPLE`). Never claim the whole dataset is analysed.
 - **Self-correction:** each agent retries at most 2 times, then returns
@@ -246,8 +321,9 @@ tests, and current project documentation.
 
 ## Open questions / undecided
 
-- Whether to keep GPT-5.4 as the binding target or formally adopt another
-  provider/model family.
+- ~~Whether to keep GPT-5.4 as the binding target or formally adopt another
+  provider/model family.~~ Resolved 2026-07-14: approved configuration is
+  primary `gemini-2.5-flash`, fallback `gemini-3.5-flash`.
 - Minimum fuzzy-match acceptance score.
 - Whether the final frontend should merge Dashboard and Pipeline Monitor into one
   shared run state.

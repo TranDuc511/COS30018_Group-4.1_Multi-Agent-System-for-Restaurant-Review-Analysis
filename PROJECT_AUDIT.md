@@ -165,16 +165,20 @@ Fuzzy matching has no minimum acceptance score. Nonsense queries still produce
 low-score matches, and the report endpoint auto-selects the first result when no
 business ID is supplied.
 
-### P1: Model configuration is inconsistent
+### Resolved P1: Model configuration is now single-source and recorded
 
-- Binding project target: GPT-5.4 / GPT-5.4-mini.
-- Code and tracked example defaults: Gemini 2.5 Flash.
-- Audited local environment: Groq-hosted Llama models.
+Approved configuration: provider Google Gemini (OpenAI-compatible endpoint),
+primary `gemini-2.5-flash`, fallback `gemini-3.5-flash` (a *distinct* model, so
+fallback resilience is restored). Set as the default in the agents,
+`orchestrator.py`, and `.env.example`, and reconciled in `AGENTS.md`/`README`.
 
-The tracked Gemini example uses the same primary and fallback model.
-
-**Impact:** results are not reproducible across machines, evaluation provenance
-is unclear, and default fallback resilience is absent.
+Provenance: every run records the configuration actually used in the evaluation
+dump (`_summary.json -> run_config`), so results are attributable even when a
+local `.env` overrides the defaults. The agents are provider-agnostic (the
+OpenAI-compatible endpoint is chosen by environment), so the same code runs on
+cloud Gemini or a local Ollama model (`backend/.env.local.example`), satisfying
+the local-and-cloud requirement. See docs/DECISIONS.md (2026-07-14) and
+docs/LOCAL_LLM.md.
 
 ### P1: Current data path is slow and index creation is not atomic
 
@@ -231,7 +235,8 @@ frontend status, SQLite support, providers, test counts, and evaluation status.
 ## Minimum Repair Order
 
 1. Add a fuzzy-match threshold and validate business ID/name consistency.
-2. Select one approved model configuration and record provider/model per run.
+2. Done - approved configuration (gemini-2.5-flash / gemini-3.5-flash) is set
+   everywhere and recorded per run in the eval dump `run_config`.
 3. Build SQLite atomically and validate schema/completeness before use.
 4. Add real-data, frontend component, accessibility, and CI checks.
 
@@ -240,7 +245,7 @@ frontend status, SQLite support, providers, test counts, and evaluation status.
 The sampling and chained-recovery gates now pass. Demo readiness still requires:
 
 - a built and validated SQLite index;
-- the actual model/provider is recorded;
+- the actual model/provider is recorded (done - eval dump `run_config`);
 - one real dataset + API + frontend run is completed successfully.
 
 ## Audit Limitations

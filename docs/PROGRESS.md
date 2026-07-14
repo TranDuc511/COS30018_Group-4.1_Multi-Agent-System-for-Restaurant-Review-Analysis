@@ -52,10 +52,15 @@ in-memory sample; it does not validate the Yelp loader or FastAPI endpoint.
   provider-failure fallback.
 - Exact analysis-batch ID/order validation with normal self-correction retries.
 - Trusted report metadata plus FastAPI POST/SSE and frontend HTTP/SSE regressions.
+- Provider-agnostic LLM layer: the same agents run on cloud (Gemini) or a local
+  LLM (Ollama), selected by environment and recorded per run in `run_config`.
 
 ## Blocking Defects
 
-1. Binding model decision, code defaults, example config, and local config differ.
+1. ~~Binding model decision, code defaults, and example config differed.~~
+   Resolved 2026-07-14: approved config (`gemini-2.5-flash` / `gemini-3.5-flash`)
+   set everywhere, plus a local Ollama profile; the resolved provider/model is
+   recorded per run in the eval dump `run_config`.
 2. Local SQLite index is absent.
 3. Fuzzy matching has no minimum acceptance threshold or ID/name consistency check.
 4. Real-data, component UI, accessibility, and CI coverage remain incomplete.
@@ -69,13 +74,14 @@ Full evidence: [PROJECT_AUDIT.md](../PROJECT_AUDIT.md).
 | Tier 1 deterministic | Implemented and verified | Add an actual CI workflow |
 | Tier 1b degradation | Implemented and verified synthetically | Run live failure scenarios if budget permits |
 | Tier 1b reproducibility | Implemented and regression-tested | Run against the real indexed dataset |
-| Tier 1b latency/cost | Implemented | Run against approved provider and indexed data |
+| Tier 1b latency/cost | Implemented | Run against the recorded provider (cloud or local) and indexed data |
 | Tier 2 gold labels | Worksheet exists | Human-label 40 reviews, ideally with second annotator |
 | Tier 3 rubric judge | Implemented | Run against a real dump with an independent judge |
 
 ## Next Work Order
 
-1. Align model/provider configuration with `AGENTS.md`.
+1. ~~Align model/provider configuration.~~ Done - approved config
+   (gemini-2.5-flash / gemini-3.5-flash) set everywhere and recorded per run.
 2. Build and validate SQLite atomically.
 3. Add business identity/match validation.
 4. Add real-data, component UI, accessibility, and CI checks.
@@ -86,6 +92,6 @@ Full evidence: [PROJECT_AUDIT.md](../PROJECT_AUDIT.md).
 Demo readiness requires:
 
 - valid SQLite index;
-- recorded provider/model;
+- recorded provider/model (done - eval dump `run_config`, cloud or local);
 - one real dataset -> API -> frontend run;
 - Tier 1 pass on the resulting live dump.
