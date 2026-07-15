@@ -39,7 +39,9 @@ RUBRICS = {
 
 # Falls back to a model distinct from the default pipeline model
 # (gemini-2.5-flash) so an unset JUDGE_MODEL doesn't silently self-judge.
-_DEFAULT_JUDGE_MODEL = "gemini-2.5-pro"
+# `gemini-pro-latest` is the current stronger pro-tier alias; the older
+# `gemini-2.5-pro`/`gemini-3-pro-preview` ids now 404 for new accounts.
+_DEFAULT_JUDGE_MODEL = "gemini-pro-latest"
 
 _JUDGE_SYSTEM_PROMPT = """\
 You are an impartial evaluator scoring the output of a different AI system \
