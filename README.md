@@ -20,7 +20,7 @@ The cap is configurable and can be reduced per request.
 | React frontend | Working dashboard and pipeline monitor |
 | Offline tests | 71 backend and 2 frontend passed on 2026-07-14 |
 | Live integration tests | 6 collected; not rerun during the 2026-07-14 audit |
-| Evaluation | Tier 1 and degradation checks runnable; Tier 2 labels and live Tier 3 pending |
+| Evaluation | All four tiers run live on the 73-review gold set; see [docs/EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md) |
 | Local SQLite index | Not built in the audited checkout |
 
 ## Repository Structure
@@ -368,15 +368,18 @@ same review-ID set. The raw and SQLite sampling regression runs offline.
 
 ### Tier 2: labeled analysis quality
 
-Implementation and a 40-review worksheet exist. Human labels are still
-required before sentiment accuracy and aspect macro-F1 are meaningful.
+Complete. The full 73-review LOVE Grille set was hand-labelled (starting from a
+40-review stratified sample, then extended to all 73). Against those gold labels
+the analysis agent scored sentiment accuracy 0.753 and aspect macro-F1 0.852.
 
 ### Tier 3: subjective usefulness
 
-Rubric-based judging is implemented. A real end-to-end run with an independent
-judge model remains pending.
+Run live with an independent, stronger judge model (`gemini-pro-latest`) to avoid
+self-judging: root cause 4.8, recommendations 4.2, report 5.0 (1-5 scale).
 
-No CI workflow currently runs these checks automatically.
+All tier results ran against live `gemini-2.5-flash` output on 73 reviews; the
+full write-up is in [docs/EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md). No CI
+workflow yet runs these checks automatically.
 
 ## 14. Milestones
 
@@ -385,7 +388,7 @@ No CI workflow currently runs these checks automatically.
 | Scope and contracts | Complete |
 | Components and self-correction | Complete |
 | Full pipeline and API wiring | Implemented; contract and API boundary regressions pass |
-| Evaluation framework | Implemented; human/live evaluation incomplete |
+| Evaluation framework | Complete; all four tiers run live on the 73-review gold set |
 | Demo readiness | Blocked by model-config, DB-index, and business-identity issues |
 
 ## 15. Priority Risks
@@ -408,6 +411,7 @@ No CI workflow currently runs these checks automatically.
 - [docs/PROGRESS.md](docs/PROGRESS.md): current implementation status.
 - [docs/DECISIONS.md](docs/DECISIONS.md): append-only decision history.
 - [docs/RUN_TESTS.md](docs/RUN_TESTS.md): commands and test scope.
+- [docs/EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md): four-tier live evaluation results.
 - [backend/eval/README.md](backend/eval/README.md): evaluation usage.
 - [Codebase Review & Integration Report.md](<Codebase Review & Integration Report.md>):
   historical integration work.

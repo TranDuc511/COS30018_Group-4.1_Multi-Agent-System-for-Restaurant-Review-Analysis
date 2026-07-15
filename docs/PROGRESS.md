@@ -1,6 +1,6 @@
 # Project Progress
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-15._
 
 ## Snapshot
 
@@ -17,7 +17,7 @@ _Last verified: 2026-07-14._
 | FastAPI | Working | Health, search, report, and SSE endpoints; POST/SSE regressions pass |
 | Frontend | Working with state/a11y gaps | Dashboard and Pipeline Monitor are API-bound; client tests pass |
 | SQLite support | Implemented, not built locally | Raw fallback measured at 77.48 seconds |
-| Evaluation | Partially complete | Tier 1 works; Tier 2 labels and live Tier 3 remain |
+| Evaluation | Complete | All four tiers run live: Tier 2 gold n=73, Tier 3 independent judge |
 | Public deployment | Not ready | No auth, rate limiting, restricted CORS, or cost control |
 
 ## Verified Checks
@@ -69,14 +69,20 @@ Full evidence: [PROJECT_AUDIT.md](../PROJECT_AUDIT.md).
 
 ## Evaluation Status
 
-| Tier | Status | Remaining work |
+All four tiers were run live against `gemini-2.5-flash` on the full 73-review
+LOVE Grille set. Full write-up: [EVALUATION_REPORT.md](EVALUATION_REPORT.md).
+
+| Tier | Status | Result |
 | --- | --- | --- |
-| Tier 1 deterministic | Implemented and verified | Add an actual CI workflow |
-| Tier 1b degradation | Implemented and verified synthetically | Run live failure scenarios if budget permits |
-| Tier 1b reproducibility | Implemented and regression-tested | Run against the real indexed dataset |
-| Tier 1b latency/cost | Implemented | Run against the recorded provider (cloud or local) and indexed data |
-| Tier 2 gold labels | Worksheet exists | Human-label 40 reviews, ideally with second annotator |
-| Tier 3 rubric judge | Implemented | Run against a real dump with an independent judge |
+| Tier 1 deterministic | Run live | 24/25 checks passed (one caught, cosmetic evidence-id typo) |
+| Tier 1b degradation | Run live | 6/6 injected-failure scenarios handled |
+| Tier 1b reproducibility | Run live | Reproducible across seed-42 runs |
+| Tier 1b latency/cost | Run live | 357s + 148k tokens / 100 reviews |
+| Tier 2 gold labels | Complete | 73 hand-labelled reviews; sentiment acc 0.753, aspect macro-F1 0.852 |
+| Tier 3 rubric judge | Run live | Independent judge (`gemini-pro-latest`): root cause 4.8, recs 4.2, report 5.0 |
+
+Remaining evaluation follow-ups: add a CI workflow around Tier 1 and, if budget
+permits, a second Tier 2 annotator.
 
 ## Next Work Order
 
@@ -85,7 +91,8 @@ Full evidence: [PROJECT_AUDIT.md](../PROJECT_AUDIT.md).
 2. Build and validate SQLite atomically.
 3. Add business identity/match validation.
 4. Add real-data, component UI, accessibility, and CI checks.
-5. Complete human and live evaluation.
+5. ~~Complete human and live evaluation.~~ Done - all four tiers run live on the
+   full 73-review gold set (see EVALUATION_REPORT.md); CI workflow still to add.
 
 ## Demo Gate
 

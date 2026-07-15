@@ -317,6 +317,28 @@ state or a recovery-provider outage from creating an unbounded graph loop.
 `app/core/nodes.py`, `app/core/graph.py`, `app/core/orchestrator.py`, evaluation,
 tests, and current project documentation.
 
+## 2026-07-15 — Full four-tier evaluation run live on the 73-review gold set
+
+**Decision:** The evaluation is treated as complete. All four tiers were run
+against live `gemini-2.5-flash` output (not fixtures) for the full 73-review
+LOVE Grille business, closing the "never run live" blocker. Tier 3 uses a
+deliberately different, stronger judge (`gemini-pro-latest`) to avoid
+self-judging. The Tier 2 gold set was extended from the initial 40-review
+stratified sample to all 73 reviews.
+
+Headline results: Tier 1 24/25 deterministic checks (one caught cosmetic
+evidence-id typo); Tier 1b reproducible with 6/6 degradation scenarios;
+Tier 2 sentiment accuracy 0.753, aspect macro-F1 0.852; Tier 3 root cause 4.8,
+recommendations 4.2, report 5.0.
+
+**Why:** The three-tier plan (2026-06-13) was implemented but had never been
+executed end-to-end against live model output, so the quality claims were
+untested. Running it live makes the numbers defensible for the report.
+
+**Affects:** `docs/EVALUATION_REPORT.md`, `backend/eval/tier3_judge.py`,
+`backend/out/*.json`, `eval/gold/`, and project status docs. A CI workflow
+around Tier 1 and a second Tier 2 annotator remain open follow-ups.
+
 ---
 
 ## Open questions / undecided
