@@ -1,9 +1,56 @@
 # Project Strengths and Weaknesses Audit
 
 **Audit date:** 2026-07-14
-**Last updated:** 2026-07-14 after P1 contract and API/frontend boundary remediation
+**Last updated:** 2026-07-16 — snapshot corrections; see "Update 2026-07-16" below
 **Scope:** backend, data pipeline, LangGraph recovery, schemas, FastAPI,
 frontend, tests, evaluation, configuration, and documentation.
+
+> **How to read the Verification Snapshot.** It records one run, on one
+> contributor's machine, on 2026-07-14. Several lines describe *that machine's
+> local state* (which Python was installed, whether a git-ignored SQLite index
+> existed), not the state of the project — those lines will not match your
+> checkout and are not defects. Lines describing *code* (test counts, build
+> results) should match any checkout at the same commit. The snapshot is
+> preserved verbatim as a historical record; corrections are in the update
+> section below rather than edited into it.
+
+## Update 2026-07-16
+
+Verified on a different contributor's machine (Khanh) at commit `f13b2a9`.
+
+**Machine-local lines that do not generalise.** The audit ran on the machine of
+the `27c0399` author. On the checkout audited on 2026-07-16:
+
+| Snapshot line | This checkout | Nature |
+|---|---|---|
+| "Python 3.10.19 environment" | Python **3.13.12** (`venv` created 2026-05-28) | machine-local |
+| "SQLite index was absent" | **present** — 5.4 GB, built 2026-06-24 (mtime and ctime both 2026-06-24, so not copied in later) | machine-local |
+| "raw review lookup scanned 5.34 GB in 77.48 seconds" | not reproducible — with the index present, `loader._db_available()` returns `True` and the raw path is never taken | consequence of the above |
+
+**Code-level line that was stale on arrival.** The snapshot reports 77 tests
+collected / 71 offline passed. The actual counts at that same commit are **92 /
+86** (6 integration deselected — that figure is correct). The difference is
+exactly 15, which is the size of `tests/test_llm_config.py`, added by commit
+`27c0399` — the very commit that carries this audit. The tests were run, the
+audit was written, then the new test file was added, and all of it was committed
+together. Nothing was fabricated; the numbers were simply overtaken before the
+commit landed.
+
+**Consequence for the reader.** Three findings below (the SQLite gate in
+"P1: Current data path is slow", the "Minimum Repair Order" item 3, and the
+"Demo Readiness Gate") were written assuming no index exists. On a checkout
+where the index has been built, they are already satisfied. They remain valid
+for any contributor who has not built it, since the file is git-ignored by
+design.
+
+**Also on 2026-07-16:** `docs/LOCAL_LLM.md`, referenced at line 181 below and
+from seven other places, does not exist and never has (`git log --all` returns
+nothing for that path). See `docs/FINDINGS_2026-07-16.md` F12.
+
+**Findings not covered by this audit.** Twelve further findings — including a
+P0 concerning the median 15-review sample size, and a P1 architecture drift in
+the Orchestrator — are recorded in `docs/FINDINGS_2026-07-16.md`. That document
+is an addendum to this one, not a replacement.
 
 ## Verdict
 
@@ -177,16 +224,31 @@ dump (`_summary.json -> run_config`), so results are attributable even when a
 local `.env` overrides the defaults. The agents are provider-agnostic (the
 OpenAI-compatible endpoint is chosen by environment), so the same code runs on
 cloud Gemini or a local Ollama model (`backend/.env.local.example`), satisfying
-the local-and-cloud requirement. See docs/DECISIONS.md (2026-07-14) and
-docs/LOCAL_LLM.md.
+the local-and-cloud requirement. See docs/DECISIONS.md (2026-07-14).
 
-### P1: Current data path is slow and index creation is not atomic
+> **Correction (2026-07-16).** This section originally also pointed to
+> `docs/LOCAL_LLM.md`. That file does not exist and never has — `git log --all`
+> returns nothing for the path, and it is referenced from seven other places
+> besides this one. The local profile is genuinely implemented
+> (`backend/.env.local.example`, `app/core/llm_config.py`), so the *decision*
+> stands; only its walkthrough is missing. Because that walkthrough is the
+> written evidence for the Option-D local-LLM requirement, this is worth closing
+> early. See `docs/FINDINGS_2026-07-16.md` F12.
 
-The audited checkout had no SQLite DB. Each report therefore scans 5.34 GB before
-LLM processing.
+### P1: Index creation is not atomic (the "slow path" half is machine-local)
 
-`build_db.py` writes to the final path and commits intermediate tables. An
-interrupted build can leave a partial DB that the loader treats as valid.
+*Machine-local half — resolved on some checkouts.* The machine audited on
+2026-07-14 had no SQLite DB, so every report scanned 5.34 GB before LLM
+processing. This does not apply where `scripts/build_db.py` has been run: the
+2026-07-16 checkout has a 5.4 GB index built on 2026-06-24, and `loader`
+switches to it automatically. The DB is git-ignored by design, so this remains
+true for any contributor who has not built it — it is a per-machine setup step,
+not an open code defect.
+
+*Still open on every checkout.* `build_db.py` writes to the final path and
+commits intermediate tables. An interrupted build can leave a partial DB that
+`_db_available()` treats as valid, since it only tests `os.path.exists`. This is
+the real defect in this section and it is unchanged.
 
 ### P1: Data, component, and CI boundaries lack tests
 
@@ -238,13 +300,21 @@ frontend status, SQLite support, providers, test counts, and evaluation status.
 2. Done - approved configuration (gemini-2.5-flash / gemini-3.5-flash) is set
    everywhere and recorded per run in the eval dump `run_config`.
 3. Build SQLite atomically and validate schema/completeness before use.
+   *(2026-07-16: an index exists on at least one checkout, so the "build it"
+   half is done there. The atomicity and validation half is untouched.)*
 4. Add real-data, frontend component, accessibility, and CI checks.
+
+This order predates `docs/FINDINGS_2026-07-16.md`, which raises a P0 (statistical
+claims unqualified on a median 15-review sample) and a P1 architecture drift in
+the Orchestrator. Neither is reflected in the ordering above; the two documents
+should be reconciled before the list is used to plan work.
 
 ## Demo Readiness Gate
 
 The sampling and chained-recovery gates now pass. Demo readiness still requires:
 
-- a built and validated SQLite index;
+- a built and validated SQLite index — *built* on the 2026-07-16 checkout;
+  *validated* is still open (see the atomicity gap above);
 - the actual model/provider is recorded (done - eval dump `run_config`);
 - one real dataset + API + frontend run is completed successfully.
 
@@ -254,3 +324,11 @@ The sampling and chained-recovery gates now pass. Demo readiness still requires:
 - No browser automation or Lighthouse audit was run.
 - Coverage percentage is unknown because coverage tooling is not installed.
 - Security review was static and local; no penetration test was performed.
+- **The Verification Snapshot reflects one machine.** Lines about the installed
+  Python and the presence of the git-ignored SQLite index describe the auditing
+  contributor's local setup, not the project. A future audit should either state
+  which machine it ran on, or separate machine-local observations from
+  code-level ones. See "Update 2026-07-16".
+- **Test counts can go stale within their own commit.** The snapshot's 77/71
+  was correct when measured and wrong when committed, because `27c0399` added
+  15 tests after the run. Re-run counts immediately before committing an audit.
