@@ -114,7 +114,7 @@ SQLite support, seeded sampling, and request-level cap handling are implemented.
 Build the index once from `backend/`:
 
 ```powershell
-python scripts/build_db.py
+'python scripts/build_db.py'
 ```
 
 Use `--rebuild` to replace an existing DB:
