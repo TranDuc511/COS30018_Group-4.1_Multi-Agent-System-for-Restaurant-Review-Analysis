@@ -49,7 +49,7 @@ Thumbs.db
 backend/trace_agents.py
 backend/trace_agents_live.py
 
-docs/
+
 
 .env.example
 
