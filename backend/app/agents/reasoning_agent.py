@@ -24,7 +24,7 @@ Focus only on patterns that appear in multiple reviews. Return only valid JSON."
 
 
 class ReasoningAgent(BaseAgent):
-    def run(self, input_data: dict) -> dict:
+    def run(self, input_data: dict, feedback: str | None = None) -> dict:
         business_id = input_data.get("business_id", "unknown")
         sample_size = input_data.get("sample_size", 0)
         analysis_results = input_data.get("analysis_results", [])
@@ -34,10 +34,13 @@ class ReasoningAgent(BaseAgent):
             f"for business '{business_id}':\n"
             f"{json.dumps(analysis_results, indent=2)}"
         )
-        messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": original_task},
-        ]
+        messages = self._with_feedback(
+            [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": original_task},
+            ],
+            feedback,
+        )
 
         result, error, error_type, attempts = self._run_with_retry(messages, ReasoningOutput, original_task)
 
@@ -53,9 +56,16 @@ class ReasoningAgent(BaseAgent):
         ).model_dump()
 
 
-def reason_over_reviews(analysis_results: list[dict], business_id: str = "unknown") -> dict:
-    return ReasoningAgent().run({
-        "business_id": business_id,
-        "sample_size": len(analysis_results),
-        "analysis_results": analysis_results,
-    })
+def reason_over_reviews(
+    analysis_results: list[dict],
+    business_id: str = "unknown",
+    feedback: str | None = None,
+) -> dict:
+    return ReasoningAgent().run(
+        {
+            "business_id": business_id,
+            "sample_size": len(analysis_results),
+            "analysis_results": analysis_results,
+        },
+        feedback=feedback,
+    )

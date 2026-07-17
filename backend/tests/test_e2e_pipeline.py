@@ -27,7 +27,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 
-from app.core.graph import build_graph
+from app.core.graph import RECURSION_LIMIT, build_graph
 from app.core.nodes import (
     analysis_node,
     reasoning_node,
@@ -84,6 +84,22 @@ SAMPLE_REVIEWS = [
         "text": "Loved it! Friendly staff and the meal came out quickly. No complaints at all.",
         "date": "2024-03-20",
     },
+    # Six reviews total: the supervising orchestrator halts runs with fewer
+    # than supervision.MIN_VIABLE_N (5) successful analyses.
+    {
+        "review_id": "e2e-5",
+        "business_id": BUSINESS_ID,
+        "stars": 2,
+        "text": "Food is fine but expect to wait. Took nearly half an hour before anyone took our order.",
+        "date": "2024-04-08",
+    },
+    {
+        "review_id": "e2e-6",
+        "business_id": BUSINESS_ID,
+        "stars": 1,
+        "text": "Terribly slow service again. The waiting time ruins what could be a good diner.",
+        "date": "2024-04-19",
+    },
 ]
 
 
@@ -112,6 +128,9 @@ def _initial_state() -> PipelineState:
         "errors": {},
         "pipeline_status": "running",
         "failed_agent": None,
+        "flags": [],
+        "retry_feedback": None,
+        "last_verdict": None,
     }
 
 
@@ -132,7 +151,7 @@ def _invoke_until_complete(graph, attempts: int = 3) -> PipelineState:
     """
     last: PipelineState | None = None
     for _ in range(attempts):
-        last = graph.invoke(_initial_state())
+        last = graph.invoke(_initial_state(), {"recursion_limit": RECURSION_LIMIT})
         if last["pipeline_status"] == "complete":
             return last
     pytest.fail(

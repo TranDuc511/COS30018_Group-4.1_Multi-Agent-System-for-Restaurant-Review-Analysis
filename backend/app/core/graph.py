@@ -1,110 +1,113 @@
+"""Simple-hub pipeline graph (docs/ORCHESTRATOR_SIMPLE_HUB.md).
+
+Every agent stage reports to the orchestrator, which measures the output with
+deterministic checks (app/core/supervision.py) and decides
+``proceed | proceed_with_warning | retry | halt``:
+
+    preprocess -> analysis -> ORCH -> reasoning -> ORCH -> strategy -> ORCH -> report -> ORCH -> END
+                                |
+                                +- retry -> re-run the stage that just ran (with retry_feedback)
+                                +- halt  -> END
+
+The orchestrator holds control at every transition — not only on failure — and
+is the single routing node. ``pipeline_status`` keeps its terminal semantics
+(``running | complete | halted``); per-cycle verdicts live in ``last_verdict``.
+
+Callers MUST invoke/stream the compiled graph with
+``{"recursion_limit": RECURSION_LIMIT}``: the worst case (2 retries on all four
+stages) is 25 node visits — exactly LangGraph's default limit.
+"""
+
 from langgraph.graph import StateGraph, END
 
+from app.core import supervision
 from app.core.state import PipelineState
-from app.core.orchestrator import OrchestratorAgent
 
-orchestrator = OrchestratorAgent()
+# Canonical sequential order of the agent nodes (single source of truth in
+# supervision.py so measuring and routing can never disagree).
+AGENT_SEQUENCE = supervision.AGENT_SEQUENCE
 
-# Canonical sequential order of the agent nodes. Recovery routing uses this to
-# re-run the agent that actually failed, or to continue with the next stage.
-AGENT_SEQUENCE = ["analysis_agent", "reasoning_agent", "strategy_agent", "report_agent"]
-
-
-# ── Routing functions (conditional edges) ────────────────────────────────────
-
-def route_after_analysis(state: PipelineState) -> str:
-    results = state.get("analysis_results") or []
-    errors = [r for r in results if r.get("status") == "error"]
-    if results and len(errors) > len(results) * 0.5:  # >50% failed — escalate
-        return "error_handler"
-    return "reasoning_agent"
+# Worst case: 1 preprocess + 4 stages x (agent + orchestrator) x 3 attempts
+# = 25 visits, exactly LangGraph's default recursion limit. Leave headroom.
+RECURSION_LIMIT = 50
 
 
-def route_after_reasoning(state: PipelineState) -> str:
-    out = state.get("reasoning_output") or {}
-    return "error_handler" if out.get("status") == "error" else "strategy_agent"
+# ── Orchestrator node (measures, then decides — every stage, every run) ──────
 
 
-def route_after_strategy(state: PipelineState) -> str:
-    out = state.get("strategy_output") or {}
-    return "error_handler" if out.get("status") == "error" else "report_agent"
+def orchestrator_node(state: PipelineState) -> PipelineState:
+    stage = supervision.latest_stage(state)
+    if stage is None:  # defensive: entry edge goes preprocess -> analysis
+        state["last_verdict"] = "proceed"
+        return state
 
+    facts = supervision.measure(stage, state)
+    decision = supervision.decide(stage, facts, state.get("retry_counts") or {})
 
-def route_after_report(state: PipelineState) -> str:
-    out = state.get("report_output") or {}
-    return "error_handler" if out.get("status") == "error" else END
+    flags = state.setdefault("flags", [])
+    for flag in decision.flags:
+        if flag not in flags:
+            flags.append(flag)
 
+    state["last_verdict"] = decision.verdict
+    errors = state.setdefault("errors", {})
 
-def _next_agent(failed_agent: str) -> str:
-    """The agent that runs after `failed_agent`, or "END" if it is the last stage."""
-    try:
-        idx = AGENT_SEQUENCE.index(failed_agent)
-    except ValueError:
-        return "END"
-    return AGENT_SEQUENCE[idx + 1] if idx + 1 < len(AGENT_SEQUENCE) else "END"
+    if decision.verdict == "retry":
+        retry_counts = state.setdefault("retry_counts", {})
+        retry_counts[stage] = retry_counts.get(stage, 0) + 1
+        state["retry_feedback"] = decision.retry_feedback
+        state["failed_agent"] = stage
+        errors[stage] = decision.retry_feedback or "quality check failed"
+        state["pipeline_status"] = "running"
+        return state
 
+    state["retry_feedback"] = None
 
-def route_after_error_handler(state: PipelineState) -> str:
-    status = state.get("pipeline_status", "halted")
-    failed = state.get("failed_agent")
-    if status == "retry" and failed in AGENT_SEQUENCE:
-        return failed                 # re-run the agent that actually failed
-    if status == "skip":
-        return _next_agent(failed)    # continue with the next stage
-    return "END"                      # halted
-
-
-# ── Error handler node ────────────────────────────────────────────────────────
-
-def _infer_failed_agent(state: PipelineState) -> str:
-    """Determine the latest failed stage without trusting stale routing state."""
-    for output_key, agent in (
-        ("report_output", "report_agent"),
-        ("strategy_output", "strategy_agent"),
-        ("reasoning_output", "reasoning_agent"),
-    ):
-        out = state.get(output_key) or {}
-        if out.get("status") == "error":
-            return agent
-
-    results = state.get("analysis_results") or []
-    errors = [r for r in results if r.get("status") == "error"]
-    if results and len(errors) > len(results) * 0.5:
-        return "analysis_agent"
-
-    explicit = state.get("failed_agent")
-    if explicit:
-        return explicit
-
-    return "analysis_agent"  # safe default — error_handler only runs on a real failure
-
-
-def error_handler_node(state: PipelineState) -> PipelineState:
-    failed = _infer_failed_agent(state)
-    error = state.get("errors", {}).get(failed, "unknown error")
-    count = state.get("retry_counts", {}).get(failed, 0)
-
-    decision = orchestrator.decide_recovery(failed, error, count)
-
-    # Never silently drop a critical agent: downgrade a "skip" decision to "halt".
-    if decision == "skip" and orchestrator.is_critical(failed):
-        decision = "halt"
-
-    state.setdefault("retry_counts", {})[failed] = count + 1
-    state["failed_agent"] = failed
-
-    if decision == "retry":
-        state["pipeline_status"] = "retry"
-    elif decision == "skip":
-        state.setdefault("skipped_agents", []).append(failed)
-        state["pipeline_status"] = "skip"
-    else:
+    if decision.verdict == "halt":
+        state["failed_agent"] = stage
+        errors[stage] = (
+            decision.retry_feedback or "; ".join(decision.flags) or "halted by orchestrator"
+        )
         state["pipeline_status"] = "halted"
+        return state
 
+    # proceed / proceed_with_warning
+    if decision.verdict == "proceed_with_warning" and f"{stage}:gave_up_after_retries" in decision.flags:
+        # Non-critical stage abandoned after exhausting retries (the old "skip",
+        # now on the record instead of silent).
+        skipped = state.setdefault("skipped_agents", [])
+        if stage not in skipped:
+            skipped.append(stage)
+    else:
+        errors.pop(stage, None)
+
+    if stage == "reasoning_agent":
+        # Python is authoritative for frequency (F2a) — patch the claimed
+        # values now that this output is final.
+        supervision.apply_frequency_corrections(state.get("reasoning_output") or {}, facts)
+
+    state["failed_agent"] = None
+    state["pipeline_status"] = "complete" if stage == "report_agent" else "running"
     return state
 
 
+# ── Routing (the orchestrator is the only node that routes) ──────────────────
+
+
+def route_from_orchestrator(state: PipelineState) -> str:
+    verdict = state.get("last_verdict")
+    stage = supervision.latest_stage(state)
+
+    if verdict == "halt" or stage is None:
+        return "END"
+    if verdict == "retry":
+        return stage
+    nxt = supervision.next_stage(stage)
+    return nxt if nxt else "END"
+
+
 # ── Build the graph ───────────────────────────────────────────────────────────
+
 
 def build_graph(analysis_node, reasoning_node, strategy_node, report_node, preprocess_node):
     graph = StateGraph(PipelineState)
@@ -114,19 +117,16 @@ def build_graph(analysis_node, reasoning_node, strategy_node, report_node, prepr
     graph.add_node("reasoning_agent", reasoning_node)
     graph.add_node("strategy_agent",  strategy_node)
     graph.add_node("report_agent",    report_node)
-    graph.add_node("error_handler",   error_handler_node)
+    graph.add_node("orchestrator",    orchestrator_node)
 
     graph.set_entry_point("preprocess")
     graph.add_edge("preprocess", "analysis_agent")
 
-    graph.add_conditional_edges("analysis_agent",  route_after_analysis)
-    graph.add_conditional_edges("reasoning_agent", route_after_reasoning)
-    graph.add_conditional_edges("strategy_agent",  route_after_strategy)
-    graph.add_conditional_edges("report_agent",    route_after_report)
+    # Every agent reports to the orchestrator; only the orchestrator routes.
+    for agent in AGENT_SEQUENCE:
+        graph.add_edge(agent, "orchestrator")
 
-    # Dynamic recovery routing: retry -> the failed agent, skip -> next stage,
-    # halt -> END.
-    graph.add_conditional_edges("error_handler", route_after_error_handler, {
+    graph.add_conditional_edges("orchestrator", route_from_orchestrator, {
         "analysis_agent":  "analysis_agent",
         "reasoning_agent": "reasoning_agent",
         "strategy_agent":  "strategy_agent",

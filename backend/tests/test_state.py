@@ -15,6 +15,10 @@ def test_state_initialises():
         "errors": {},
         "pipeline_status": "running",
         "failed_agent": None,
+        "flags": [],
+        "retry_feedback": None,
+        "last_verdict": None,
     }
     assert state["business_name"] == "McDonald's"
     assert state["pipeline_status"] == "running"
+    assert state["flags"] == []

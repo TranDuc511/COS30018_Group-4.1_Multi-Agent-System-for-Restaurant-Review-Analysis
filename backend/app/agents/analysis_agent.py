@@ -57,12 +57,15 @@ class AnalysisAgent(BaseAgent):
             recoverable=False,
         ).model_dump()
 
-    def run_batch(self, reviews: list[dict]) -> list[dict]:
+    def run_batch(self, reviews: list[dict], feedback: str | None = None) -> list[dict]:
         """Analyse several reviews in a single LLM call.
 
         Returns one result dict per input review (success analyses or, if the
         whole batch failed, an AgentError per review so downstream counts stay
         aligned with the number of reviews submitted).
+
+        ``feedback`` carries the orchestrator's retry_feedback when this batch
+        is a supervised re-run.
         """
         if not reviews:
             return []
@@ -71,10 +74,13 @@ class AnalysisAgent(BaseAgent):
             f"Analyse the following {len(reviews)} restaurant reviews and return "
             f"structured JSON:\n{json.dumps(reviews, indent=2)}"
         )
-        messages = [
-            {"role": "system", "content": _BATCH_SYSTEM_PROMPT},
-            {"role": "user", "content": original_task},
-        ]
+        messages = self._with_feedback(
+            [
+                {"role": "system", "content": _BATCH_SYSTEM_PROMPT},
+                {"role": "user", "content": original_task},
+            ],
+            feedback,
+        )
 
         expected_ids = [str(review["review_id"]) for review in reviews]
 
@@ -108,6 +114,6 @@ def analyse_review(review: dict) -> dict:
     return AnalysisAgent().run(review)
 
 
-def analyse_reviews(reviews: list[dict]) -> list[dict]:
+def analyse_reviews(reviews: list[dict], feedback: str | None = None) -> list[dict]:
     """Batch entry point — analyse a list of reviews in one LLM call."""
-    return AnalysisAgent().run_batch(reviews)
+    return AnalysisAgent().run_batch(reviews, feedback=feedback)

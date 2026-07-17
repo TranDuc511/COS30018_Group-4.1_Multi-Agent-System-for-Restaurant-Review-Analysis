@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 
-from app.core import llm_config
+from app.core import llm_config, supervision
 
 load_dotenv()
 
@@ -39,6 +39,19 @@ class OrchestratorAgent:
 
     def is_critical(self, agent: str) -> bool:
         return self._normalize(agent) in self.CRITICAL_AGENTS
+
+    def decide(self, state: dict) -> supervision.Decision:
+        """Simple-hub supervision: measure the stage that just ran, then apply
+        the deterministic decision rules (docs/ORCHESTRATOR_SIMPLE_HUB.md §2).
+
+        Runs after EVERY stage, not only on failure. No LLM involved — the
+        common path must not depend on the provider it supervises.
+        """
+        stage = supervision.latest_stage(state)
+        if stage is None:  # nothing has run yet — nothing to judge
+            return supervision.Decision("proceed")
+        facts = supervision.measure(stage, state)
+        return supervision.decide(stage, facts, state.get("retry_counts") or {})
 
     def decide_recovery(self, failed_agent: str, error_detail: str, retry_count: int) -> str:
         """Choose a recovery strategy: retry | skip | halt."""

@@ -125,6 +125,8 @@ def _dump_stages(final_state: dict, out_dir: str) -> None:
         "failed_agent": final_state.get("failed_agent"),
         "errors": final_state.get("errors"),
         "retry_counts": final_state.get("retry_counts"),
+        "flags": final_state.get("flags"),
+        "last_verdict": final_state.get("last_verdict"),
     }
 
     for name, payload in {"_summary": summary, **stages}.items():

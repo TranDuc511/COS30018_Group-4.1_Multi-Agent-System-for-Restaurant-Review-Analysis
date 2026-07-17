@@ -57,7 +57,7 @@ def test_report_endpoint_returns_trusted_metadata(monkeypatch):
 
 def test_stream_endpoint_emits_progress_and_trusted_report(monkeypatch):
     class FakeGraph:
-        def stream(self, state, stream_mode):
+        def stream(self, state, config=None, stream_mode=None):
             final = _pipeline_state()
             for stage in main._AGENT_SEQUENCE:
                 yield {stage: final}
