@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.core.graph import RECURSION_LIMIT
 from app.core.pipeline import build_pipeline, initial_state, run_pipeline
 from app.data.loader import MAX_REVIEWS, load_reviews, search_business
 from app.data.preprocessor import preprocess
@@ -47,6 +48,7 @@ class BusinessMatch(BaseModel):
 class ReportResponse(ReportOutput):
     analysis_summary: dict[str, Any] = {}
     reasoning_summary: dict[str, Any] = {}
+    flags: list[str] = []  # supervision warnings, e.g. "low_confidence:n=13"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -85,6 +87,7 @@ def _build_report_response(
         "sample_size": sample_size,
         "analysis_summary": _build_analysis_summary(analysis_results),
         "reasoning_summary": {"patterns": reasoning.get("patterns", [])},
+        "flags": state.get("flags") or [],
     }
 
 
@@ -209,28 +212,56 @@ def stream_report(
                        "info": f"{len(df)} cleaned"})
 
             # ── Agent stages (driven through the graph, one event per node) ──
+            # Event contract: docs/ORCHESTRATOR_SIMPLE_HUB.md Appendix B.
+            # A retried stage emits stage_start/stage_end again with attempt+1,
+            # so the frontend must key its timeline by (stage, attempt).
             graph = build_pipeline()
             state = initial_state(best["name"], df, best["business_id"])
 
-            yield sse({"type": "stage_start", "stage": "analysis_agent"})
+            attempts: dict[str, int] = {"analysis_agent": 1}
+            current_stage = "analysis_agent"
+            yield sse({"type": "stage_start", "stage": current_stage, "attempt": 1})
             last = time.perf_counter()
             final_state: dict[str, Any] | None = None
 
-            for chunk in graph.stream(state, stream_mode="updates"):
+            for chunk in graph.stream(
+                state, {"recursion_limit": RECURSION_LIMIT}, stream_mode="updates"
+            ):
                 for node_name, update in chunk.items():
                     if isinstance(update, dict):
                         final_state = update
                     if node_name in _AGENT_SEQUENCE:
+                        current_stage = node_name
                         yield sse({"type": "stage_end", "stage": node_name,
+                                   "attempt": attempts.get(node_name, 1),
                                    "duration_ms": round((time.perf_counter() - last) * 1000)})
-                        last = time.perf_counter()
-                        idx = _AGENT_SEQUENCE.index(node_name)
-                        if idx + 1 < len(_AGENT_SEQUENCE):
-                            yield sse({"type": "stage_start",
-                                       "stage": _AGENT_SEQUENCE[idx + 1]})
-                    elif node_name == "error_handler":
-                        yield sse({"type": "notice", "stage": "error_handler",
-                                   "detail": "recovery handler ran"})
+                    elif node_name == "orchestrator" and isinstance(update, dict):
+                        verdict = update.get("last_verdict")
+                        event: dict[str, Any] = {
+                            "type": "verdict", "stage": current_stage,
+                            "verdict": verdict, "flags": update.get("flags") or [],
+                        }
+                        if verdict in ("retry", "halt", "proceed_with_warning"):
+                            detail = (update.get("retry_feedback")
+                                      or (update.get("errors") or {}).get(current_stage))
+                            if detail:
+                                event["detail"] = detail
+                        yield sse(event)
+
+                        # Announce the stage this verdict routes to next.
+                        if verdict == "retry":
+                            next_stage = current_stage
+                        elif verdict in ("proceed", "proceed_with_warning"):
+                            idx = _AGENT_SEQUENCE.index(current_stage)
+                            next_stage = (_AGENT_SEQUENCE[idx + 1]
+                                          if idx + 1 < len(_AGENT_SEQUENCE) else None)
+                        else:  # halt
+                            next_stage = None
+                        if next_stage:
+                            attempts[next_stage] = attempts.get(next_stage, 0) + 1
+                            yield sse({"type": "stage_start", "stage": next_stage,
+                                       "attempt": attempts[next_stage]})
+                            last = time.perf_counter()
 
             # ── Final report ────────────────────────────────────────────────
             final_state = final_state or {}
@@ -241,7 +272,8 @@ def stream_report(
                 return
 
             full_report = _build_report_response(final_state, best["name"], len(df))
-            yield sse({"type": "done", "report": full_report})
+            yield sse({"type": "done", "report": full_report,
+                       "flags": final_state.get("flags") or []})
         except Exception as exc:  # surface any unexpected failure to the client
             yield sse({"type": "error", "detail": str(exc)})
 

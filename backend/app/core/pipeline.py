@@ -8,7 +8,7 @@ FastAPI endpoint should both call :func:`run_pipeline`.
 
 from typing import Any, Optional
 
-from app.core.graph import build_graph
+from app.core.graph import RECURSION_LIMIT, build_graph
 from app.core.nodes import (
     analysis_node,
     passthrough_preprocess_node,
@@ -56,6 +56,9 @@ def initial_state(
         "errors": {},
         "pipeline_status": "running",
         "failed_agent": None,
+        "flags": [],
+        "retry_feedback": None,
+        "last_verdict": None,
     }
 
 
@@ -66,8 +69,13 @@ def run_pipeline(
 ) -> PipelineState:
     """Run the full pipeline end to end and return the final state.
 
-    Stages: analysis -> reasoning -> strategy -> report, driven through the real
-    LangGraph graph with the orchestrator's retry/skip/halt error handling.
+    Stages: analysis -> reasoning -> strategy -> report, each followed by the
+    orchestrator's deterministic supervision (simple hub). The explicit
+    recursion limit is required: with retries, the default of 25 is exactly
+    the worst case (see app/core/graph.py).
     """
     graph = build_pipeline()
-    return graph.invoke(initial_state(business_name, reviews, business_id))
+    return graph.invoke(
+        initial_state(business_name, reviews, business_id),
+        {"recursion_limit": RECURSION_LIMIT},
+    )

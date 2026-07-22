@@ -20,5 +20,10 @@ class PipelineState(TypedDict):
     errors:          Dict[str, str]     # { "analysis": "error detail" }
 
     # Pipeline control (YOU manage these)
-    pipeline_status:  str               # "running" | "halted" | "complete"
+    pipeline_status:  str               # "running" | "halted" | "complete" (terminal semantics only)
     failed_agent:     Optional[str]     # set when an agent returns error status
+
+    # Simple-hub supervision (see docs/ORCHESTRATOR_SIMPLE_HUB.md)
+    flags:            List[str]         # e.g. "low_confidence:n=13", "frequency_corrected:..."
+    retry_feedback:   Optional[str]     # why the orchestrator ordered a retry; consumed by the re-run
+    last_verdict:     Optional[str]     # proceed | proceed_with_warning | retry | halt

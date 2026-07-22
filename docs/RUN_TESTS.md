@@ -42,12 +42,17 @@ python -m pytest -m integration
 
 # Full live graph with the fixed in-memory sample.
 python -m pytest tests/test_e2e_pipeline.py -v -m integration
+
+# Supervision rules only (simple hub): measure/decide against the real
+# backend/out/ dumps plus synthetic edge cases. Offline, fast.
+python -m pytest tests/test_supervision.py -v
 ```
 
-Verified on 2026-07-14 (after adding the local/cloud provider profiles):
+Verified on 2026-07-17 (after the simple-hub orchestrator, Option B):
 
-- 87 collected;
-- 81 offline tests passed (includes 10 new `test_llm_config.py` tests);
+- 119 collected;
+- 113 offline tests passed (includes 23 new `test_supervision.py` tests and
+  the rewritten hub graph/routing tests);
 - 6 live tests deselected (run only when a reachable provider is configured).
 
 The live tests use the provider/model from `.env` (cloud Gemini or local
@@ -66,11 +71,12 @@ exactly.
 | `test_report_agent.py` | report behavior and retries | Mocked |
 | `test_llm_config.py` | provider/model resolution: local (Ollama) vs cloud, placeholder key, run_config label | No |
 | `test_api.py` | FastAPI report/SSE contracts and trusted metadata | No |
-| `test_orchestrator*.py` | retry/skip/halt, provider fallback, chained failures | No |
-| `test_graph.py` | happy-path graph wiring | Mocked |
+| `test_supervision.py` | hub measure/decide rules on real dumps + synthetic edge cases | No |
+| `test_orchestrator*.py` | criticality, hub verdicts/routing, retry-with-feedback, chained failures | No |
+| `test_graph.py` | hub graph wiring: happy path, retry, halt, gave-up-on-record | Mocked |
 | `test_eval_tier1.py` | deterministic evaluator regressions | No |
 | `test_integration.py` | live analysis and reasoning | Yes |
-| `test_e2e_pipeline.py` | live full graph on four in-memory reviews | Yes |
+| `test_e2e_pipeline.py` | live full graph on six in-memory reviews | Yes |
 
 Known coverage gaps:
 
@@ -101,14 +107,42 @@ python -m eval.tier2_analysis --gold eval/gold/analysis_gold.jsonl
 python -m eval.tier3_judge out/
 ```
 
-Verified on 2026-07-14:
+Verified on 2026-07-17:
 
 - Tier 1 fixture: 16/16 passed.
-- Degradation harness: 6/6 passed.
+- Degradation harness: 8/8 passed (rewritten for the simple hub — covers
+  proceed, low-confidence warning, insufficient-data halt, majority-failure
+  retry, fabricated-evidence retry, gave-up-on-record, and report halt).
+- Tier 1 on a fresh live hub run (`out_hub/`, Groq llama-3.3-70b): 22/22.
 
 The focused chained-failure test verifies production node recovery state without
 making live model calls. The synthetic harness still does not prove live
 provider behavior.
+
+## Verifying a Live Hub Run
+
+After any live pipeline run, three things prove the supervision worked
+(docs/ORCHESTRATOR_SIMPLE_HUB.md):
+
+```powershell
+# 1. Run against the same business as the committed baseline and dump stages.
+python run_pipeline.py --name "LOVE Grille" --pick 1 --dump-stages out_hub
+
+# 2. Score the dump. Evidence ids, aspect grounding, and frequencies should
+#    all pass — frequencies are recomputed in Python and overwritten by the
+#    orchestrator, so a frequency failure here means a supervision bug.
+python -m eval.tier1_checks out_hub
+
+# 3. Inspect supervision provenance in the summary:
+#    retry_counts (which stages needed re-runs), flags (low_confidence,
+#    frequency_corrected, *:gave_up_after_retries), last_verdict.
+Get-Content out_hub/_summary.json
+```
+
+On the SSE endpoint, each stage now emits a `verdict` event and
+`stage_start`/`stage_end` carry an `attempt` number — a retried stage appears
+twice with attempt 1 and 2. Frontend consumers must key timelines by
+`(stage, attempt)`.
 
 ## Run the API
 

@@ -1,17 +1,17 @@
-"""Tests for orchestrator criticality normalisation and graph recovery routing.
+"""Tests for orchestrator criticality and simple-hub routing.
 
 These cover only the deterministic hard-rule and routing logic — no LLM calls.
 """
 
-from app.core.orchestrator import OrchestratorAgent
+from app.core import nodes, supervision
 from app.core import graph as g
-from app.core import nodes
+from app.core.orchestrator import OrchestratorAgent
 from app.core.pipeline import build_pipeline, initial_state
 
 orchestrator = OrchestratorAgent()
 
 
-# ── Criticality is suffix-insensitive (#2) ───────────────────────────────────
+# ── Criticality is suffix-insensitive ─────────────────────────────────────────
 
 def test_is_critical_matches_both_name_forms():
     assert orchestrator.is_critical("analysis") is True
@@ -20,6 +20,8 @@ def test_is_critical_matches_both_name_forms():
     assert orchestrator.is_critical("strategy_agent") is False
     assert orchestrator.is_critical("report") is False
 
+
+# ── Legacy recovery API (kept until the team removes it) ─────────────────────
 
 def test_hard_rule_halts_critical_and_skips_noncritical_when_exhausted():
     assert orchestrator.decide_recovery("analysis_agent", "boom", retry_count=2) == "halt"
@@ -39,75 +41,72 @@ def test_provider_failure_uses_deterministic_recovery(monkeypatch):
     assert local.decide_recovery("strategy_agent", "boom", retry_count=2) == "skip"
 
 
-# ── Recovery routing targets the actual failed agent (#1) ────────────────────
+# ── OrchestratorAgent.decide(state): hub supervision, no LLM ─────────────────
 
-def test_retry_routes_back_to_failed_agent():
-    state = {"pipeline_status": "retry", "failed_agent": "strategy_agent"}
-    assert g.route_after_error_handler(state) == "strategy_agent"
+def test_decide_measures_the_latest_stage():
+    state = {
+        "analysis_results": [
+            {"review_id": f"r{i}", "sentiment": "negative",
+             "aspects": [{"category": "wait_time", "label": "negative"}],
+             "status": "success"}
+            for i in range(supervision.LOW_CONFIDENCE_N)
+        ],
+        "retry_counts": {},
+    }
+    assert orchestrator.decide(state).verdict == "proceed"
+
+    state["reasoning_output"] = {"patterns": [], "root_causes": [],
+                                 "status": "error", "error_detail": "boom"}
+    decision = orchestrator.decide(state)
+    assert decision.verdict == "retry"
+    assert decision.retry_feedback == "boom"
 
 
-def test_skip_routes_to_next_stage():
-    state = {"pipeline_status": "skip", "failed_agent": "reasoning_agent"}
-    assert g.route_after_error_handler(state) == "strategy_agent"
+# ── route_from_orchestrator ───────────────────────────────────────────────────
+
+def test_retry_routes_back_to_the_stage_that_just_ran():
+    state = {"last_verdict": "retry", "analysis_results": [], "reasoning_output": {}}
+    assert g.route_from_orchestrator(state) == "reasoning_agent"
 
 
-def test_skip_on_last_stage_ends_pipeline():
-    state = {"pipeline_status": "skip", "failed_agent": "report_agent"}
-    assert g.route_after_error_handler(state) == "END"
+def test_proceed_routes_to_the_next_stage():
+    state = {"last_verdict": "proceed", "analysis_results": [], "reasoning_output": {}}
+    assert g.route_from_orchestrator(state) == "strategy_agent"
+
+
+def test_proceed_with_warning_also_advances():
+    state = {"last_verdict": "proceed_with_warning", "analysis_results": []}
+    assert g.route_from_orchestrator(state) == "reasoning_agent"
+
+
+def test_proceed_on_report_ends_pipeline():
+    state = {"last_verdict": "proceed", "analysis_results": [],
+             "reasoning_output": {}, "strategy_output": {}, "report_output": {}}
+    assert g.route_from_orchestrator(state) == "END"
 
 
 def test_halt_ends_pipeline():
-    state = {"pipeline_status": "halted", "failed_agent": "analysis_agent"}
-    assert g.route_after_error_handler(state) == "END"
+    state = {"last_verdict": "halt", "analysis_results": []}
+    assert g.route_from_orchestrator(state) == "END"
 
 
-# ── error_handler_node never skips a critical agent ──────────────────────────
+# ── Full-graph chained recovery with the real supervision rules ──────────────
 
-def test_error_handler_downgrades_skip_to_halt_for_critical_agent(monkeypatch):
-    # Force the orchestrator to "decide" skip; the node must override to halt
-    # because analysis is critical.
-    monkeypatch.setattr(g.orchestrator, "decide_recovery", lambda *a, **k: "skip")
-
-    state = {
-        "failed_agent": "analysis_agent",
-        "errors": {"analysis_agent": "schema error"},
-        "retry_counts": {},
-        "skipped_agents": [],
-    }
-    result = g.error_handler_node(state)
-
-    assert result["pipeline_status"] == "halted"
-    assert "analysis_agent" not in result["skipped_agents"]
-    assert result["retry_counts"]["analysis_agent"] == 1
-
-
-def test_error_handler_allows_skip_for_noncritical_agent(monkeypatch):
-    monkeypatch.setattr(g.orchestrator, "decide_recovery", lambda *a, **k: "skip")
-
-    state = {
-        "failed_agent": "strategy_agent",
-        "errors": {"strategy_agent": "schema error"},
-        "retry_counts": {},
-        "skipped_agents": [],
-    }
-    result = g.error_handler_node(state)
-
-    assert result["pipeline_status"] == "skip"
-    assert result["skipped_agents"] == ["strategy_agent"]
-
-
-def test_chained_failures_use_current_agent_and_terminate(monkeypatch):
-    reasoning_calls = 0
-    recovery_calls = []
+def test_chained_failures_retry_with_feedback_and_terminate(monkeypatch):
+    """reasoning fails once (retried with feedback, then succeeds); strategy
+    fails persistently (retried to the cap, then abandoned on the record);
+    report succeeds — the pipeline completes with the degradation visible."""
+    reasoning_feedback: list = []
+    strategy_calls = {"count": 0}
 
     monkeypatch.setattr(
         nodes,
         "analyse_reviews",
-        lambda batch: [
+        lambda batch, feedback=None: [
             {
                 "review_id": review["review_id"],
-                "sentiment": "positive",
-                "aspects": [],
+                "sentiment": "negative",
+                "aspects": [{"category": "wait_time", "label": "negative"}],
                 "status": "success",
                 "error_detail": None,
             }
@@ -115,40 +114,43 @@ def test_chained_failures_use_current_agent_and_terminate(monkeypatch):
         ],
     )
 
-    def fake_reasoning(_results, business_id):
-        nonlocal reasoning_calls
-        reasoning_calls += 1
-        if reasoning_calls == 1:
+    def fake_reasoning(_results, business_id, feedback=None):
+        reasoning_feedback.append(feedback)
+        if len(reasoning_feedback) == 1:
             return {"status": "error", "error_detail": "reasoning failed"}
         return {"status": "success", "error_detail": None, "patterns": [], "root_causes": []}
 
     monkeypatch.setattr(nodes, "reason_over_reviews", fake_reasoning)
-    monkeypatch.setattr(
-        nodes,
-        "generate_recommendations",
-        lambda *_args, **_kwargs: {"status": "error", "error_detail": "strategy failed"},
-    )
+
+    def fake_strategy(*_args, **_kwargs):
+        strategy_calls["count"] += 1
+        return {"status": "error", "error_detail": "strategy failed", "recommendations": []}
+
+    monkeypatch.setattr(nodes, "generate_recommendations", fake_strategy)
     monkeypatch.setattr(
         nodes,
         "generate_report",
         lambda *_args, **_kwargs: {"status": "success", "error_detail": None},
     )
 
-    def decide(failed_agent, error_detail, retry_count):
-        recovery_calls.append((failed_agent, error_detail, retry_count))
-        return "retry" if failed_agent == "reasoning_agent" else "skip"
-
-    monkeypatch.setattr(g.orchestrator, "decide_recovery", decide)
-
     reviews = [
-        {"review_id": "r1", "stars": 5, "text": "good", "date": "2024-01-01"}
+        {"review_id": f"r{i}", "stars": 2, "text": "slow", "date": "2024-01-01"}
+        for i in range(supervision.MIN_VIABLE_N + 1)
     ]
-    result = build_pipeline().invoke(initial_state("Test", reviews, "b1"))
+    result = build_pipeline().invoke(
+        initial_state("Test", reviews, "b1"), {"recursion_limit": g.RECURSION_LIMIT}
+    )
 
-    assert recovery_calls == [
-        ("reasoning_agent", "reasoning failed", 0),
-        ("strategy_agent", "strategy failed", 0),
-    ]
+    # reasoning: first run blind, second run carries the failure detail
+    assert reasoning_feedback[0] is None
+    assert "reasoning failed" in reasoning_feedback[1]
+
+    # strategy: initial run + MAX retries, then abandoned on the record
+    assert strategy_calls["count"] == 1 + supervision.MAX_RECOVERY_RETRIES
+    assert result["skipped_agents"] == ["strategy_agent"]
+    assert "strategy_agent:gave_up_after_retries" in result["flags"]
+
     assert result["pipeline_status"] == "complete"
     assert result["failed_agent"] is None
-    assert result["skipped_agents"] == ["strategy_agent"]
+    assert result["retry_counts"]["reasoning_agent"] == 1
+    assert result["retry_counts"]["strategy_agent"] == supervision.MAX_RECOVERY_RETRIES

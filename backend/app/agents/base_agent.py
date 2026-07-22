@@ -31,6 +31,16 @@ Required JSON schema:
 
 Return only valid JSON that matches the schema. Do not add explanation."""
 
+# Appended when the orchestrator ordered a re-run with retry_feedback: without
+# changed input, a temperature-0 re-run would reproduce the identical output
+# (docs/ORCHESTRATOR_SIMPLE_HUB.md §5.3).
+_SUPERVISOR_FEEDBACK_PROMPT = """\
+A deterministic quality check rejected your previous answer to this task:
+
+{feedback}
+
+Produce a corrected answer that fixes exactly these issues. Return only valid JSON."""
+
 
 class BaseAgent(ABC):
     MAX_RETRIES = 2
@@ -48,6 +58,15 @@ class BaseAgent(ABC):
         self._client = OpenAI(**llm_config.client_kwargs())
         self._model = llm_config.primary_model()
         self._fallback_model = llm_config.fallback_model()
+
+    @staticmethod
+    def _with_feedback(messages: list[dict], feedback: str | None) -> list[dict]:
+        """Append the orchestrator's retry feedback (if any) to the prompt."""
+        if not feedback:
+            return messages
+        return messages + [
+            {"role": "user", "content": _SUPERVISOR_FEEDBACK_PROMPT.format(feedback=feedback)}
+        ]
 
     def _record_usage(self, resp) -> None:
         usage = getattr(resp, "usage", None)

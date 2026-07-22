@@ -108,15 +108,18 @@ class StrategyAgent(BaseAgent):
         super().__init__()
         self._model, self._fallback_model = _candidate_models()
 
-    def run(self, input_data: dict) -> dict:
+    def run(self, input_data: dict, feedback: str | None = None) -> dict:
         original_task = (
             "Generate prioritised restaurant business recommendations from "
             f"these patterns and root causes:\n{json.dumps(input_data, indent=2)}"
         )
-        messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": original_task},
-        ]
+        messages = self._with_feedback(
+            [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": original_task},
+            ],
+            feedback,
+        )
 
         result, error, error_type, attempts = self._run_with_retry(
             messages,
@@ -136,11 +139,13 @@ class StrategyAgent(BaseAgent):
         ).model_dump()
 
 
-def _llm_recommendations(payload: dict) -> dict:
-    return StrategyAgent().run(payload)
+def _llm_recommendations(payload: dict, feedback: str | None = None) -> dict:
+    return StrategyAgent().run(payload, feedback=feedback)
 
 
-def generate_recommendations(payload: dict, use_llm: bool = True) -> dict:
+def generate_recommendations(
+    payload: dict, use_llm: bool = True, feedback: str | None = None
+) -> dict:
     try:
         StrategicAgentInput.model_validate(payload)
     except ValidationError as exc:
@@ -153,6 +158,6 @@ def generate_recommendations(payload: dict, use_llm: bool = True) -> dict:
         _load_environment()
         if not llm_config.is_configured():
             return _error("OPENAI_API_KEY is not set.")
-        return _llm_recommendations(payload)
+        return _llm_recommendations(payload, feedback=feedback)
 
     return _deterministic_recommendations(patterns, root_causes)

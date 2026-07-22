@@ -110,15 +110,18 @@ class ReportAgent(BaseAgent):
         super().__init__()
         self._model, self._fallback_model = _candidate_models()
 
-    def run(self, input_data: dict) -> dict:
+    def run(self, input_data: dict, feedback: str | None = None) -> dict:
         original_task = (
             "Generate the final restaurant review analysis report from these "
             f"upstream outputs:\n{json.dumps(input_data, indent=2)}"
         )
-        messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": original_task},
-        ]
+        messages = self._with_feedback(
+            [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": original_task},
+            ],
+            feedback,
+        )
 
         result, error, error_type, attempts = self._run_with_retry(
             messages,
@@ -140,11 +143,11 @@ class ReportAgent(BaseAgent):
         ).model_dump()
 
 
-def _llm_report(payload: dict) -> dict:
-    return ReportAgent().run(payload)
+def _llm_report(payload: dict, feedback: str | None = None) -> dict:
+    return ReportAgent().run(payload, feedback=feedback)
 
 
-def generate_report(payload: dict, use_llm: bool = True) -> dict:
+def generate_report(payload: dict, use_llm: bool = True, feedback: str | None = None) -> dict:
     try:
         ReportGeneratorInput.model_validate(payload)
     except ValidationError as exc:
@@ -154,6 +157,6 @@ def generate_report(payload: dict, use_llm: bool = True) -> dict:
         _load_environment()
         if not llm_config.is_configured():
             return _error("OPENAI_API_KEY is not set.")
-        return _llm_report(payload)
+        return _llm_report(payload, feedback=feedback)
 
     return _deterministic_report(payload)

@@ -5,8 +5,9 @@ static dump:
 
     - reproducibility     same sample seed -> identical sampled review_ids twice
     - latency & cost      per-stage timing + LLM token counts per 100 reviews
-    - degradation         inject a malformed agent payload and assert the
-                          Orchestrator takes the designed retry -> skip -> halt path
+    - degradation         inject malformed / low-quality stage outputs and assert
+                          the supervising orchestrator takes the designed
+                          proceed / proceed_with_warning / retry / halt path
 
 Run:  python -m eval.harness --name "McDonald's" --pick 1 --runs 3
 """
@@ -93,60 +94,110 @@ def measure_latency_and_cost(business_name: str, pick: int) -> dict:
 
 
 def check_degradation_paths() -> list[dict]:
-    """Feed malformed outputs into the graph and assert the Orchestrator routes
-    retry/skip/halt as designed. Mirrors tests/test_orchestrator_routing.py, but
-    exercises graph.error_handler_node + graph.route_after_error_handler as an
-    integration pair rather than unit-testing each in isolation, and forces the
-    orchestrator's decision so no live LLM call is required.
+    """Feed malformed / low-quality stage outputs through the supervising
+    orchestrator and assert it takes the designed verdict + route. Exercises
+    graph.orchestrator_node + graph.route_from_orchestrator as an integration
+    pair on the REAL supervision rules — fully deterministic, no LLM call.
     """
     scenarios = []
 
-    def _run(name: str, failed_agent: str, retry_count: int, expect_status: str, expect_route: str, forced_decision: str | None = None):
-        state = {
-            "failed_agent": failed_agent,
-            "errors": {failed_agent: "injected malformed payload"},
-            "retry_counts": {failed_agent: retry_count},
-            "skipped_agents": [],
-        }
-        if forced_decision is not None:
-            # Force the LLM-backed decision so the scenario is deterministic and
-            # needs no live API call.
-            with patch.object(g.orchestrator, "decide_recovery", lambda *a, **k: forced_decision):
-                result_state = g.error_handler_node(state)
-        else:
-            # Exercise the orchestrator's real hard-rule short-circuit
-            # (retry_count >= 3), which never reaches the LLM call.
-            result_state = g.error_handler_node(state)
-        route = g.route_after_error_handler(result_state)
-        passed = result_state["pipeline_status"] == expect_status and route == expect_route
+    def _good_analyses(n: int) -> list[dict]:
+        return [
+            {"review_id": f"r{i}", "sentiment": "negative",
+             "aspects": [{"category": "wait_time", "label": "negative"}],
+             "status": "success"}
+            for i in range(n)
+        ]
+
+    def _run(name: str, state: dict, expect_verdict: str, expect_route: str):
+        state.setdefault("errors", {})
+        state.setdefault("skipped_agents", [])
+        state.setdefault("flags", [])
+        result_state = g.orchestrator_node(state)
+        route = g.route_from_orchestrator(result_state)
+        passed = result_state["last_verdict"] == expect_verdict and route == expect_route
         scenarios.append(
             {
                 "scenario": name,
-                "failed_agent": failed_agent,
-                "forced_decision": forced_decision or "(real hard rule)",
-                "expected": {"status": expect_status, "route": expect_route},
-                "actual": {"status": result_state["pipeline_status"], "route": route},
+                "expected": {"verdict": expect_verdict, "route": expect_route},
+                "actual": {"verdict": result_state["last_verdict"], "route": route},
                 "passed": passed,
             }
         )
 
-    # Critical agent (analysis), orchestrator says retry -> routes back to analysis_agent.
-    _run("critical_retry", "analysis_agent", retry_count=0, expect_status="retry", expect_route="analysis_agent", forced_decision="retry")
+    # Healthy stage output -> explicit proceed on the record.
+    _run(
+        "healthy_analysis_proceeds",
+        {"analysis_results": _good_analyses(40), "retry_counts": {}},
+        expect_verdict="proceed", expect_route="reasoning_agent",
+    )
 
-    # Critical agent exhausted retries -> real hard rule halts (no LLM call needed).
-    _run("critical_exhausted_halts", "analysis_agent", retry_count=2, expect_status="halted", expect_route="END")
+    # Small-but-viable sample -> continues, flagged low_confidence (F1).
+    _run(
+        "small_sample_flagged_low_confidence",
+        {"analysis_results": _good_analyses(13), "retry_counts": {}},
+        expect_verdict="proceed_with_warning", expect_route="reasoning_agent",
+    )
 
-    # Critical agent, orchestrator (wrongly) says skip -> node downgrades to halt.
-    _run("critical_skip_downgraded_to_halt", "reasoning_agent", retry_count=0, expect_status="halted", expect_route="END", forced_decision="skip")
+    # Too little data for any defensible report -> halt.
+    _run(
+        "insufficient_data_halts",
+        {"analysis_results": _good_analyses(3), "retry_counts": {}},
+        expect_verdict="halt", expect_route="END",
+    )
 
-    # Non-critical agent, orchestrator says skip -> continues at the next stage.
-    _run("noncritical_skip_continues", "strategy_agent", retry_count=0, expect_status="skip", expect_route="report_agent", forced_decision="skip")
+    # Critical stage, majority of the batch failed, retries remain -> retry.
+    _run(
+        "critical_majority_failure_retries",
+        {"analysis_results": _good_analyses(6)
+         + [{"status": "error", "error_detail": "injected"} for _ in range(7)],
+         "retry_counts": {}},
+        expect_verdict="retry", expect_route="analysis_agent",
+    )
 
-    # Non-critical agent is the last stage -> skip ends the pipeline.
-    _run("noncritical_skip_on_last_stage_ends", "report_agent", retry_count=0, expect_status="skip", expect_route="END", forced_decision="skip")
+    # Same failure with retries exhausted -> halt (critical never degrades silently).
+    _run(
+        "critical_exhausted_halts",
+        {"analysis_results": _good_analyses(6)
+         + [{"status": "error", "error_detail": "injected"} for _ in range(7)],
+         "retry_counts": {"analysis_agent": 2}},
+        expect_verdict="halt", expect_route="END",
+    )
 
-    # Non-critical agent exhausted retries -> real hard rule skips (no LLM call needed).
-    _run("noncritical_exhausted_skips", "strategy_agent", retry_count=2, expect_status="skip", expect_route="report_agent")
+    # Reasoning citing nonexistent evidence -> retry with feedback (fabrication gate).
+    _run(
+        "fabricated_evidence_retries",
+        {"analysis_results": _good_analyses(40),
+         "reasoning_output": {"patterns": [{"description": "ghost", "aspect": "wait_time",
+                                            "frequency": 1.0,
+                                            "evidence_review_ids": ["no-such-id"]}],
+                              "root_causes": [], "status": "success"},
+         "retry_counts": {}},
+        expect_verdict="retry", expect_route="reasoning_agent",
+    )
+
+    # Non-critical stage broken beyond the cap -> continues ON THE RECORD
+    # (flag + skipped_agents), the report still runs.
+    _run(
+        "noncritical_gave_up_continues_on_record",
+        {"analysis_results": _good_analyses(40),
+         "reasoning_output": {"patterns": [], "root_causes": [], "status": "success"},
+         "strategy_output": {"recommendations": [], "status": "error",
+                             "error_detail": "injected"},
+         "retry_counts": {"strategy_agent": 2}},
+        expect_verdict="proceed_with_warning", expect_route="report_agent",
+    )
+
+    # Report broken beyond the cap -> halt (no report = nothing to proceed to).
+    _run(
+        "report_gave_up_halts",
+        {"analysis_results": _good_analyses(40),
+         "reasoning_output": {"patterns": [], "root_causes": [], "status": "success"},
+         "strategy_output": {"recommendations": [], "status": "success"},
+         "report_output": {"status": "error", "error_detail": "injected"},
+         "retry_counts": {"report_agent": 2}},
+        expect_verdict="halt", expect_route="END",
+    )
 
     return scenarios
 

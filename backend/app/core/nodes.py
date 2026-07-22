@@ -54,6 +54,17 @@ def _set_stage_error(
     state["pipeline_status"] = "running"
 
 
+def _consume_retry_feedback(state: PipelineState) -> str | None:
+    """Take (and clear) the orchestrator's retry feedback for this re-run.
+
+    Cleared on read so it only ever reaches the stage that was ordered to
+    retry — the next stage must not see a stale correction.
+    """
+    feedback = state.get("retry_feedback")
+    state["retry_feedback"] = None
+    return feedback
+
+
 def passthrough_preprocess_node(state: PipelineState) -> PipelineState:
     """No-op preprocess node for callers that load + clean data *before* the graph.
 
@@ -65,6 +76,7 @@ def passthrough_preprocess_node(state: PipelineState) -> PipelineState:
 
 
 def analysis_node(state: PipelineState) -> PipelineState:
+    feedback = _consume_retry_feedback(state)
     records = _reviews_as_records(state.get("reviews_df"))
     reviews = [
         {
@@ -79,7 +91,7 @@ def analysis_node(state: PipelineState) -> PipelineState:
     results = []
     for start in range(0, len(reviews), ANALYSIS_BATCH_SIZE):
         batch = reviews[start : start + ANALYSIS_BATCH_SIZE]
-        results.extend(analyse_reviews(batch))
+        results.extend(analyse_reviews(batch, feedback=feedback))
 
     state["analysis_results"] = results
     failed = [result for result in results if result.get("status") == "error"]
@@ -94,6 +106,7 @@ def analysis_node(state: PipelineState) -> PipelineState:
 
 
 def reasoning_node(state: PipelineState) -> PipelineState:
+    feedback = _consume_retry_feedback(state)
     analysis_results = state.get("analysis_results") or []
     cleaned = [
         {
@@ -105,7 +118,7 @@ def reasoning_node(state: PipelineState) -> PipelineState:
         if a.get("status") == "success"
     ]
     output = reason_over_reviews(
-        cleaned, business_id=state.get("business_id", "unknown")
+        cleaned, business_id=state.get("business_id", "unknown"), feedback=feedback
     )
     state["reasoning_output"] = output
     _set_stage_error(
@@ -119,12 +132,13 @@ def reasoning_node(state: PipelineState) -> PipelineState:
 
 
 def strategy_node(state: PipelineState) -> PipelineState:
+    feedback = _consume_retry_feedback(state)
     reasoning = state.get("reasoning_output") or {}
     payload = {
         "patterns": reasoning.get("patterns", []),
         "root_causes": reasoning.get("root_causes", []),
     }
-    output = generate_recommendations(payload, use_llm=True)
+    output = generate_recommendations(payload, use_llm=True, feedback=feedback)
     state["strategy_output"] = output
     _set_stage_error(
         state,
@@ -137,6 +151,7 @@ def strategy_node(state: PipelineState) -> PipelineState:
 
 
 def report_node(state: PipelineState) -> PipelineState:
+    feedback = _consume_retry_feedback(state)
     reasoning = state.get("reasoning_output") or {}
     strategy = state.get("strategy_output") or {}
     payload = {
@@ -149,7 +164,7 @@ def report_node(state: PipelineState) -> PipelineState:
         },
         "recommendations": strategy.get("recommendations", []),
     }
-    out = generate_report(payload, use_llm=True)
+    out = generate_report(payload, use_llm=True, feedback=feedback)
     state["report_output"] = out
     _set_stage_error(
         state,
