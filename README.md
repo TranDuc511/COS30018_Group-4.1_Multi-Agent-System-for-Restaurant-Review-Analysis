@@ -1,419 +1,434 @@
 # COS30018 Intelligent Systems
 
-## Multi-Agent System for Restaurant Review Analysis
+## Multi-Agent Restaurant Review Analysis
 
-This project turns a bounded set of Yelp restaurant reviews into sentiment and
-aspect labels, recurring patterns, likely root causes, prioritised
-recommendations, and a web report.
+A restaurant feedback analysis system built with Python, LangGraph, FastAPI,
+and React. It turns a bounded sample of Yelp reviews into sentiment and aspect
+labels, recurring problems, root-cause hypotheses, prioritised recommendations,
+and a structured report.
 
-The loader now takes a reproducible seeded random sample of at most 100 reviews.
-The cap is configurable and can be reduced per request.
+Four LLM agents perform the analysis. A deterministic supervisor checks their
+outputs after every stage and controls progression, corrective retries, warnings,
+and halting. Users can run the pipeline through a command-line interface or a
+web dashboard with streamed progress.
 
-## Current Status
+## Features
 
-| Area | Status |
-| --- | --- |
-| Data loading, matching, preprocessing | Working; SQLite or raw JSON fallback |
-| Analysis, reasoning, strategy, report agents | Implemented |
-| LangGraph orchestration | Implemented; chained-failure recovery regression passes |
-| FastAPI | Working: health, business search, report, and SSE progress endpoints |
-| React frontend | Working dashboard and pipeline monitor |
-| Offline tests | 71 backend and 2 frontend passed on 2026-07-14 |
-| Live integration tests | 6 collected; not rerun during the 2026-07-14 audit |
-| Evaluation | All four tiers run live on the 73-review gold set; see [docs/EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md) |
-| Local SQLite index | Not built in the audited checkout |
+- Search businesses by name and confirm the intended branch using its address
+  and business ID.
+- Select up to 100 reviews using reproducible sampling, with SQLite lookup or
+  raw JSON fallback.
+- Classify overall sentiment as positive, negative, neutral, or mixed.
+- Extract aspect sentiment for food quality, staff attitude, pricing, wait time,
+  ambience, cleanliness, and other feedback.
+- Link recurring negative patterns to review IDs and compute their frequencies
+  from the analysis output.
+- Produce root-cause hypotheses, recommended actions, expected impacts, and
+  limitations in a JSON report.
+- Display sentiment and aspect summaries in the Dashboard, and stage timings
+  in the Pipeline Monitor.
+- Evaluate saved outputs with consistency checks, labeled review comparisons,
+  and model-based usefulness scoring.
 
-## Repository Structure
+## Architecture
 
-```text
-COS30018-IS/
-|-- backend/
-|   |-- app/
-|   |   |-- agents/       # LLM agents and shared retry loop
-|   |   |-- core/         # state, nodes, graph, orchestration, pipeline
-|   |   |-- data/         # loading, fuzzy matching, preprocessing
-|   |   |-- schemas/      # Pydantic contracts
-|   |   `-- main.py       # FastAPI endpoints
-|   |-- data/
-|   |   |-- raw/          # local Yelp JSON; ignored by git
-|   |   `-- processed/    # local SQLite/output files; ignored by git
-|   |-- eval/             # Tier 1, Tier 1b, Tier 2, and Tier 3 evaluation
-|   |-- scripts/build_db.py
-|   |-- tests/
-|   `-- run_pipeline.py
-|-- frontend/
-|   |-- src/api/
-|   |-- src/components/
-|   |-- src/pages/
-|   |-- src/App.jsx
-|   `-- src/styles.css
-|-- docs/
-|   |-- CLAUDE.md
-|   |-- DECISIONS.md
-|   |-- PROGRESS.md
-|   `-- RUN_TESTS.md
-|-- AGENTS.md
-|-- PROJECT_AUDIT.md
-|-- Codebase Review & Integration Report.md
-`-- Member2 changes report.MD
+```mermaid
+flowchart TD
+    UI[React dashboard or CLI] --> Search[Business search and selection]
+    Search --> Data[Yelp JSON or SQLite]
+    Data --> Prep[Seeded sampling and preprocessing]
+    Prep --> Analysis[Analysis Agent]
+    Analysis --> Supervisor{Deterministic supervisor}
+    Reasoning[Reasoning Agent] --> Supervisor
+    Strategy[Strategy Agent] --> Supervisor
+    Report[Report Agent] --> Supervisor
+    Supervisor -->|Retry analysis| Analysis
+    Supervisor -->|Next stage or retry| Reasoning
+    Supervisor -->|Next stage or retry| Strategy
+    Supervisor -->|Next stage or retry| Report
+    Supervisor -->|Complete or halt| Result[Report and pipeline state]
 ```
 
-Read [AGENTS.md](AGENTS.md) before changing architecture, data handling, agent
-contracts, or the implementation plan.
+The execution order is **Analysis → Reasoning → Strategy → Report**, with the
+same supervisor receiving control after each agent. The CLI and API share the
+production nodes and graph through
+[`pipeline.py`](backend/app/core/pipeline.py).
 
-## 1. Problem
+| Component | Responsibility |
+| --- | --- |
+| Analysis Agent | Process review batches, validate one result per input review in the original ID order, and assign sentiment/aspect labels. |
+| Reasoning Agent | Identify recurring negative patterns, cite supporting review IDs, and propose causes with confidence labels. |
+| Strategy Agent | Turn patterns and causes into prioritised actions. |
+| Report Agent | Assemble the upstream findings, causes, recommendations, and limitations into a structured report. |
+| Supervisor | Measure output quality and choose `proceed`, `proceed_with_warning`, `retry`, or `halt` using Python rules. |
 
-Restaurant feedback is distributed across unstructured reviews. Owners need:
+The production supervisor is implemented in
+[`supervision.py`](backend/app/core/supervision.py) and routed by
+[`graph.py`](backend/app/core/graph.py). The separate LLM-based
+`OrchestratorAgent` remains in the repository but does not make routing decisions
+in the production graph.
 
-- recurring positive and negative patterns;
-- evidence-linked operational issues;
-- cautious root-cause hypotheses;
-- prioritised actions rather than sentiment counts alone.
+### Validation and recovery
 
-The system analyses only a bounded review set. It must never claim to analyse
-every Yelp review.
+Agent responses are parsed as JSON and validated against
+[Pydantic contracts](backend/app/schemas/contracts.py). The shared agent layer
+allows two corrective retries after an invalid response and attempts a configured
+fallback model when a primary model call raises an exception.
 
-## 2. Implemented User Flow
+The supervisor adds stage-level checks:
 
-1. Search for a restaurant by name.
-2. Review fuzzy matches and confirm a branch.
-3. Load up to the configured review cap.
-4. Clean review records.
-5. Run analysis, reasoning, strategy, and report agents.
-6. Return the report synchronously or stream stage progress through SSE.
-7. Render the report in the React dashboard.
+- **Analysis:** halt below five successful analyses; warn below 30; retry when
+  more than half fail or more than 20% of checked sentiments contradict star
+  ratings.
+- **Reasoning:** verify evidence IDs and aspect presence. Recompute each pattern's
+  frequency as the fraction of successful analyses with a negative label for
+  that aspect. Differences above 0.05 also produce a warning.
+- **Strategy:** check that recommendation issues resemble upstream patterns or
+  causes using text similarity.
+- **Report:** check upstream cause/recommendation consistency and business name
+  and sample size against pipeline state.
 
-### Future user-flow diagram
+Each stage can receive at most two supervisor retries with corrective feedback.
+After exhaustion, analysis, reasoning, and report failures halt the pipeline.
+Strategy can be marked skipped and allow processing to continue with a warning.
+The synchronous report endpoint rejects halted pipelines. Both report endpoints
+require a report with `status: "success"` to return a successful result.
 
-Placeholder: add the final diagram after the team approves the final user flow.
+## Setup
 
-## 3. Data Source and Selection
+Use Python 3.11+ and a Node.js version supported by the checked-in Vite lockfile
+(`^20.19.0` or `>=22.12.0`). The commands below use PowerShell.
 
-The project uses the Yelp Open Dataset:
+### 1. Install backend dependencies
 
-- `backend/data/raw/yelp_academic_dataset_business.json`
-- `backend/data/raw/yelp_academic_dataset_review.json`
-
-The files are local and git-ignored.
-
-### Implemented behavior
-
-- `loader.search_business()` fuzzy-matches restaurants.
-- `loader.load_reviews()` sorts candidates by review ID, then uses
-  `RANDOM_SEED` for reproducible random selection.
-- `MAX_REVIEW_SAMPLE` is validated from 1 to 100 and defaults to 100.
-- POST and SSE report requests validate and apply an optional `sample_size`.
-- Raw JSON and SQLite paths return the same IDs for the same data, seed, and cap.
-
-### Dataset implementation plan
-
-SQLite support, seeded sampling, and request-level cap handling are implemented.
-
-## 4. SQLite Index
-
-Build the index once from `backend/`:
+From the repository root:
 
 ```powershell
-'python scripts/build_db.py'
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install fastapi uvicorn pandas rapidfuzz python-dotenv "pydantic>=2" openai langgraph langchain-openai pytest httpx scikit-learn openpyxl
+cd backend
 ```
 
-Use `--rebuild` to replace an existing DB:
+The repository currently has no Python requirements file or lockfile. This
+package list covers application, test, and evaluation imports; backend dependency
+versions are not pinned.
+
+### 2. Configure the model provider
+
+For the cloud profile, copy the example and set your provider key in `.env`:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+The example contains:
+
+```dotenv
+OPENAI_API_KEY=your-provider-key
+OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+OPENAI_MODEL=gemini-2.5-flash
+OPENAI_FALLBACK_MODEL=gemini-3.5-flash
+YELP_BUSINESS_PATH=backend/data/raw/yelp_academic_dataset_business.json
+YELP_REVIEW_PATH=backend/data/raw/yelp_academic_dataset_review.json
+MAX_REVIEW_SAMPLE=100
+RANDOM_SEED=42
+```
+
+These are repository configuration values, not a guarantee of model availability
+for every provider account. Set the endpoint and model IDs together. Without
+`OPENAI_BASE_URL`, the client uses its default OpenAI endpoint even though the
+code's default model names are Gemini names.
+
+For a local Ollama runtime, use the supplied local profile instead:
+
+```powershell
+Copy-Item .env.local.example .env
+ollama pull llama3.1
+```
+
+Keep Ollama running. This profile uses `http://localhost:11434/v1` and `llama3.1`
+for both models. The code supplies a placeholder credential for a local endpoint
+if no API key is set. The committed evaluation results below do not establish
+local-model performance.
+
+Additional settings:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `YELP_DB_PATH` | `backend/data/processed/yelp.db` | Optional SQLite index location. |
+| `MAX_REVIEW_SAMPLE` | `100` | Maximum selected reviews; must be between 1 and 100. |
+| `RANDOM_SEED` | `42` | Seed used for review selection. |
+| `ANALYSIS_BATCH_SIZE` | `10` | Reviews per analysis request; use a positive integer. |
+| `VITE_API_BASE_URL` | `http://localhost:8000` | Frontend backend URL, set in `frontend/.env` if needed. |
+
+Dataset paths are resolved relative to the repository root unless absolute.
+Model settings are resolved centrally in
+[`llm_config.py`](backend/app/core/llm_config.py).
+
+### 3. Prepare the Yelp data
+
+Place the Yelp Open Dataset's line-delimited JSON files at:
+
+```text
+backend/data/raw/yelp_academic_dataset_business.json
+backend/data/raw/yelp_academic_dataset_review.json
+```
+
+The raw dataset and generated database are git-ignored. Build the SQLite index
+from `backend/` to avoid scanning the full review JSON file on every lookup:
+
+```powershell
+python scripts/build_db.py
+```
+
+To replace an existing or interrupted index:
 
 ```powershell
 python scripts/build_db.py --rebuild
 ```
 
-The output is `backend/data/processed/yelp.db`. Without it, each report request
-scans the 5.34 GB review file. The 2026-07-14 audit measured one raw lookup at
-77.48 seconds.
+The loader automatically uses the database when it exists. Otherwise, it reads
+the raw files. The builder writes directly to the final database path, so an
+interrupted build must be rebuilt before use.
 
-Known limitation: the builder writes directly to the final DB path. An
-interrupted build may leave a partial file that the loader treats as available.
+Reviews are sorted by ID before sampling. The same data, seed, and sample size
+produce the same selected IDs across the JSON and SQLite paths. Preprocessing
+removes missing, blank, and duplicate records, normalises dates, and clips star
+ratings to 1–5. The final report size can therefore be smaller than the requested
+sample. Seeded sampling does not guarantee identical LLM responses.
 
-## 5. Architecture
+### 4. Start the application
 
-```text
-Yelp data
-  -> business matching
-  -> review loading
-  -> preprocessing
-  -> Analysis Agent
-  -> Reasoning Agent
-  -> Strategy Agent
-  -> Report Agent
-  -> FastAPI
-  -> React dashboard
-```
-
-The CLI, API, and live pipeline test reuse the production nodes in
-`backend/app/core/nodes.py` through `backend/app/core/pipeline.py`.
-
-## 6. Agent Roles
-
-| Agent | Responsibility |
-| --- | --- |
-| Analysis | Sentiment and aspect labels for review batches |
-| Reasoning | Recurring negative patterns and likely root causes |
-| Strategy | Prioritised business recommendations |
-| Report | Final structured report |
-| Orchestrator | Retry, skip, or halt decisions after stage failure |
-
-## 7. Models and Provider Configuration
-
-**Approved configuration (single source of truth):**
-
-- provider: Google Gemini via its OpenAI-compatible endpoint
-  (`OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`);
-- primary model: `gemini-2.5-flash`;
-- fallback model: `gemini-3.5-flash`.
-
-This is the configuration the code and `.env.example` default to, and it is
-recorded per run in every evaluation dump (`_summary.json -> run_config`), so
-results are always attributable to a known provider/model.
-
-**Local profile (Ollama).** The Option-D requirement to run the agents on a
-locally-deployed LLM is satisfied by a second profile
-(`backend/.env.local.example`): Ollama's OpenAI-compatible endpoint on
-`localhost:11434` with e.g. `llama3.1`. The provider is selected entirely by
-environment variables - resolved centrally in
-[`app/core/llm_config.py`](backend/app/core/llm_config.py) - so switching
-between local and cloud is a `.env` change, not a code change, and no real API
-key is needed for the local runtime. Full setup, run, and verification steps are
-in [docs/LOCAL_LLM.md](docs/LOCAL_LLM.md).
-
-The recorded `run_config` always reflects what actually ran
-(`ollama-local (openai-compatible)` vs `google-gemini (openai-compatible)`), so
-local and cloud evaluation results stay attributable. See
-[docs/DECISIONS.md](docs/DECISIONS.md) (2026-07-14 entries) for the rationale
-that superseded the earlier GPT-5.4 target and added the local profile.
-
-## 8. Structured Contracts
-
-The implemented contracts are in
-`backend/app/schemas/contracts.py`. Every agent result includes `status` and
-`error_detail`.
-
-Implemented validation includes:
-
-- sentiment and aspect enums;
-- pattern frequency range 0-1;
-- non-empty evidence ID lists;
-- recommendation priority >= 1;
-- structured strategy and report outputs.
-
-### Exact agent input/output contracts
-
-The Pydantic models are the executable source of truth. Pending hardening:
-
-- require one analysis result per input review;
-- preserve the exact input review-ID set;
-- verify report `business_name` and `sample_size` against trusted state;
-- enforce evidence and frequency grounding before returning an API response.
-
-### Report output schema
-
-`ReportOutput` contains:
-
-- `title`
-- `business_name`
-- `sample_size`
-- `executive_summary`
-- `key_findings`
-- `root_causes`
-- `recommendations`
-- `limitations`
-- `status`
-- `error_detail`
-
-### Error schema
-
-`AgentError` contains:
-
-- `status`
-- `agent`
-- `error_type`
-- `error_detail`
-- `retry_count`
-- `recoverable`
-
-### Orchestrator state schema
-
-`PipelineState` tracks business identity, review data, each agent output,
-retry counts, skipped agents, errors, pipeline status, and the failed agent.
-
-Each production node now records its current error and clears recovered state.
-The handler inspects current outputs from the latest stage backward instead of
-trusting a stale `failed_agent` value.
-
-## 9. Error Handling
-
-Agent-level behavior:
-
-1. Call the configured model.
-2. Parse JSON.
-3. Validate with Pydantic.
-4. Retry correction at most two times after schema failure.
-5. Return a structured error after exhaustion.
-
-Graph-level behavior:
-
-- analysis and reasoning are critical;
-- strategy and report may be skipped;
-- the orchestrator chooses retry, skip, or halt;
-- graph retries stop after two attempts;
-- provider exceptions or invalid recovery responses deterministically retry
-  while attempts remain, then halt critical stages or skip non-critical stages.
-
-## 10. API
-
-Run from `backend/`:
+With the virtual environment active, start the backend from `backend/`:
 
 ```powershell
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
-Endpoints:
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/health` | Process-level health |
-| GET | `/api/businesses/search` | Fuzzy business search |
-| POST | `/api/reports` | Synchronous full report |
-| GET | `/api/reports/stream` | SSE progress and final report |
-
-`/health` does not verify dataset, DB, credentials, or provider readiness.
-The API has wildcard CORS and no authentication or rate limits, so it is a
-local-demo API, not a safe public deployment.
-
-## 11. Frontend
-
-Run:
+In another terminal, start the frontend from the repository root:
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Build:
+Open the URL printed by Vite. Search for a restaurant, select its branch, and
+generate a report. The Pipeline Monitor provides a separate view for streamed
+stage progress and timing.
+
+### Command-line usage
+
+From `backend/`, run interactively or select a search result explicitly:
 
 ```powershell
-npm run build
+python run_pipeline.py
+python run_pipeline.py --name "LOVE Grille" --pick 1 --sample-size 73 --dump-stages out_demo
 ```
 
-Set `VITE_API_BASE_URL` when the backend is not at
-`http://localhost:8000`.
+`--pick` is one-based. Add `--json` to print the report as JSON. `--dump-stages`
+writes `analysis.json`, `reasoning.json`, `strategy.json`, `report.json`, and
+`_summary.json`. New summaries record provider/model configuration, pipeline
+status, retries, errors, skipped stages, and supervision flags. Live runs require
+the dataset and a reachable configured model provider.
 
-Implemented views:
+## API
 
-- Dashboard: business selection, KPIs, sentiment, aspects, findings, patterns,
-  root causes, recommendations, and limitations.
-- Pipeline Monitor: SSE stage status, timings, slowest-stage detection, and
-  final summary.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Process health; returns `{"status":"ok"}`. |
+| GET | `/api/businesses/search?name=LOVE%20Grille&top_n=3` | Fuzzy business matches with IDs, addresses, review counts, and scores. |
+| POST | `/api/reports` | Run the pipeline and return a structured report. |
+| GET | `/api/reports/stream` | Run the pipeline and stream JSON events through SSE. |
 
-Known UI gaps:
+Example report request body:
 
-- Dashboard and Pipeline Monitor do not share report state;
-- changing restaurant can leave a stale report visible;
-- focus, live-region, and status accessibility need hardening.
+```json
+{
+  "restaurant_name": "LOVE Grille",
+  "business_id": "4Env6uGYxMhXFKPfcuzUuQ",
+  "sample_size": 73
+}
+```
 
-## 12. Testing
+`business_id` and `sample_size` are optional. Without an ID, the API uses the best
+fuzzy match. With an ID, it uses the supplied name without cross-checking it
+against the business table. `sample_size` must be within `1..MAX_REVIEW_SAMPLE`;
+the supervisor still requires at least five successful analyses.
 
-From `backend/`:
+The SSE endpoint accepts the same fields as query parameters and emits
+`stage_start`, `stage_end`, `verdict`, `done`, and `error` events. Agent
+events include attempt numbers, and stage completion events carry durations.
+
+Successful responses include the report's title, business name, sample size,
+executive summary, findings, root causes, recommendations, and limitations, plus
+computed `analysis_summary`, `reasoning_summary`, and supervision `flags`.
+
+## Results included in the repository
+
+Two saved runs analyse the same 73 review IDs for **LOVE Grille**, business ID
+`4Env6uGYxMhXFKPfcuzUuQ`. Both summaries record completion without skipped stages
+or supervisor retries. They are saved examples, not fresh runs of the current
+checkout.
+
+| Measure | [`backend/out`](backend/out/report.json) | [`backend/out_hub`](backend/out_hub/report.json) |
+| --- | --- | --- |
+| Recorded model information | `gemini-2.5-flash` identified by the judge artifact; summary has no `run_config` | Groq: `llama-3.3-70b-versatile`, fallback `llama-3.1-8b-instant` |
+| Reviews analysed | 73 | 73 |
+| Positive / negative / neutral / mixed | 25 / 32 / 0 / 16 | 31 / 34 / 6 / 2 |
+| Patterns / recommendations | 5 / 5 | 4 / 4 |
+| Saved Tier 1 checks passed | 24 / 25 | 22 / 22 |
+| Sentiment accuracy against the current worksheet | 0.795 (58/73) | 0.945 (69/73) |
+| Aspect-presence macro-F1 against the current worksheet | 0.847 | 0.710 |
+
+The analysis scores above were recomputed from each saved `analysis.json` and
+the 73 labeled rows in the `Labeling` sheet of
+[`tier2_gold_labeling_worksheet.xlsx`](backend/eval/gold/tier2_gold_labeling_worksheet.xlsx).
+All 73 IDs align in both runs. The calculation follows
+[`tier2_analysis.py`](backend/eval/tier2_analysis.py): sentiment accuracy compares
+the overall label, and aspect macro-F1 averages binary aspect-presence F1 across
+the seven categories. It does **not** measure correctness of aspect sentiment.
+These are offline comparisons of saved predictions, not new model calls.
+
+The [earlier Tier 1 result](backend/out/tier1_report.json) contains one failed
+evidence-existence check: a food-quality pattern cites review ID
+`SKXs-JiPXpVnAwcXhA5wA`, which is absent from its analysis output. The
+[`out_hub` result](backend/out_hub/tier1_report.json) passes all 22 recorded
+checks. Check counts differ because the runs produced different numbers of
+patterns. Passing consistency checks does not establish that inferred causes
+are true.
+
+### Example findings and recommendations
+
+The saved `out_hub` report identifies negative food-quality and pricing feedback
+in 30.1% of analysed reviews each, staff-attitude feedback in 20.5%, and wait-time
+feedback in 13.7%. Its actions focus on kitchen quality control, menu pricing,
+staff training, and service processes. These aspect frequencies can overlap
+because a review may mention several issues.
+
+### Saved judge assessment
+
+[`backend/out/tier3_scores.json`](backend/out/tier3_scores.json) records a
+`gemini-pro-latest` judge scoring the earlier output on a 1–5 scale:
+
+| Criterion | Score |
+| --- | --- |
+| Root-cause plausibility, mean | 4.8 |
+| Recommendation actionability, mean | 4.2 |
+| Report usefulness | 5.0 |
+
+These are subjective model judgments for one restaurant. They do not measure
+business outcomes, and no equivalent Tier 3 result is included for `out_hub`.
+The dataset is too narrow to establish general performance across restaurants.
+
+## Testing and evaluation
+
+Run offline backend tests from `backend/`:
 
 ```powershell
 python -m pytest -m "not integration"
 ```
 
-Verified on 2026-07-14:
+Tests cover preprocessing, raw/SQLite sampling parity, agent contracts,
+supervision and routing, API responses/SSE, provider configuration, and
+deterministic evaluation. Live integration tests require model access:
 
-- 77 backend tests collected;
-- 71 offline backend tests passed;
-- 6 live integration tests deselected;
-- 2 frontend API-client tests passed;
-- Tier 1 fixture passed 16/16 checks;
-- degradation harness passed 6/6 synthetic scenarios;
-- frontend production build passed.
+```powershell
+python -m pytest -m integration
+```
 
-The live E2E test uses four in-memory reviews. It validates real model and graph
-wiring, not the raw Yelp path. Offline regressions now cover FastAPI POST/SSE and
-the frontend HTTP/SSE client; real-dataset, component UI, and CI checks remain.
+Run frontend API-client tests and a production build from `frontend/`:
 
-See [docs/RUN_TESTS.md](docs/RUN_TESTS.md).
+```powershell
+npm test
+npm run build
+```
 
-## 13. Evaluation Plan and Status
+Verification during this README update: **2 frontend tests passed**. Backend
+tests could not start because the current Python environment lacks `pytest`.
+No live model runs or frontend production build were performed for this update.
 
-### Tier 1: deterministic consistency
+### Evaluation commands
 
-Implemented and offline:
+From `backend/`:
 
-- schema validity;
-- evidence ID existence;
-- aspect grounding;
-- frequency recomputation;
-- recommendation traceability;
-- report subset checks;
-- completion status.
+```powershell
+# Tier 1: schemas, evidence, frequencies, traceability, and report consistency.
+# Writes tier1_report.json inside the chosen dump directory.
+python -m eval.tier1_checks out_hub
 
-### Tier 1b: pipeline behavior
+# Tier 1b: synthetic degradation and recovery scenarios, without model calls.
+python -m eval.harness --skip-live
 
-Implemented:
+# Tier 1b: sampling reproducibility, live stage latency, and token usage.
+python -m eval.harness --name "LOVE Grille" --pick 1 --runs 3 --seed 42
 
-- degradation paths;
-- reproducibility interface;
-- latency and token measurement.
+# Convert the labeled worksheet into the gold JSONL consumed by Tier 2.
+python eval/gold/build_gold_jsonl.py eval/gold/tier2_gold_labeling_worksheet.xlsx
 
-The harness applies its requested seed and checks that repeated loads return the
-same review-ID set. The raw and SQLite sampling regression runs offline.
+# Tier 2: run NEW analysis predictions against the gold labels.
+python -m eval.tier2_analysis --gold eval/gold/analysis_gold.jsonl
+```
 
-### Tier 2: labeled analysis quality
+To reproduce the table above from saved predictions after generating the gold
+JSONL, use the scoring functions directly; change `out` to `out_hub` for the
+second run:
 
-Complete. The full 73-review LOVE Grille set was hand-labelled (starting from a
-40-review stratified sample, then extended to all 73). Against those gold labels
-the analysis agent scored sentiment accuracy 0.753 and aspect macro-F1 0.852.
+```powershell
+python -c "import json; from eval.tier2_analysis import load_gold, score_sentiment, score_aspects_macro_f1; gold = load_gold('eval/gold/analysis_gold.jsonl'); pred = json.load(open('out/analysis.json', encoding='utf-8')); print('sentiment_accuracy:', score_sentiment(gold, pred)); print('aspects:', score_aspects_macro_f1(gold, pred))"
+```
 
-### Tier 3: subjective usefulness
+Tier 3's entry point is `python -m eval.tier3_judge <dump_dir>`, with the judge
+selected by `JUDGE_MODEL`. It uses the configured provider endpoint and key.
+However, its three required files under `backend/eval/rubrics/` are absent from
+this checkout: `root_cause_plausibility.md`, `recommendation_actionability.md`,
+and `report_usefulness.md`. Restore those rubrics before rerunning the judge.
 
-Run live with an independent, stronger judge model (`gemini-pro-latest`) to avoid
-self-judging: root cause 4.8, recommendations 4.2, report 5.0 (1-5 scale).
+## Repository layout
 
-All tier results ran against live `gemini-2.5-flash` output on 73 reviews; the
-full write-up is in [docs/EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md). No CI
-workflow yet runs these checks automatically.
+```text
+backend/
+  app/
+    agents/             Four LLM agents and shared response/retry handling
+    core/               Pipeline state, production nodes, graph, and supervision
+    data/               Business matching, review loading, and preprocessing
+    schemas/            Pydantic input/output contracts
+    main.py             FastAPI application and SSE endpoint
+  data/raw/             Local Yelp source files (git-ignored)
+  data/processed/       Local SQLite index (git-ignored)
+  eval/
+    fixtures/           Synthetic stage outputs for offline evaluation
+    gold/               Labeling worksheet and JSONL conversion utility
+    tier1_checks.py     Deterministic checks for saved outputs
+    harness.py          Recovery, sampling, latency, and token checks
+    tier2_analysis.py   Labeled analysis evaluation
+    tier3_judge.py      Model-based usefulness evaluation
+  out/                  Earlier saved run and Tier 1/Tier 3 results
+  out_hub/              Groq saved run and Tier 1 results
+  scripts/build_db.py  SQLite index builder
+  tests/                Backend tests
+  run_pipeline.py       Interactive and scripted CLI
+frontend/
+  src/api/              HTTP/SSE client and tests
+  src/components/       Business picker
+  src/pages/            Dashboard and Pipeline Monitor
+  src/App.jsx           View switching
+  src/styles.css        Application styles
+```
 
-## 14. Milestones
+## Current limitations
 
-| Phase | Status |
-| --- | --- |
-| Scope and contracts | Complete |
-| Components and self-correction | Complete |
-| Full pipeline and API wiring | Implemented; contract and API boundary regressions pass |
-| Evaluation framework | Complete; all four tiers run live on the 73-review gold set |
-| Demo readiness | Blocked by model-config, DB-index, and business-identity issues |
-
-## 15. Priority Risks
-
-| Priority | Risk | Required action |
-| --- | --- | --- |
-| Resolved P0 | Seeded random sampling and request cap | Raw/SQLite/API regression coverage passes |
-| Resolved P0 | Chained recovery state | Current-agent and provider-fallback regressions pass |
-| Resolved P1 | Schema-valid output may be incomplete or misidentified | Exact batch IDs/order and trusted report metadata regressions pass |
-| Resolved P1 | API/frontend production boundaries lack tests | FastAPI POST/SSE and frontend HTTP/SSE client regressions pass |
-| P1 | Business ID/name consistency and fuzzy acceptance remain weak | Add identity validation and an approved threshold |
-| Resolved P1 | Provider/model sources disagreed | Approved config (gemini-2.5-flash primary / gemini-3.5-flash fallback) set everywhere and recorded in eval `run_config` |
-| P1 | Missing local SQLite index causes minute-scale scans | Build and validate the index before demos |
-
-## 16. Project Documentation
-
-- [AGENTS.md](AGENTS.md): binding repository rules.
-- [PROJECT_AUDIT.md](PROJECT_AUDIT.md): verified strengths, weaknesses, and
-  repair order.
-- [docs/PROGRESS.md](docs/PROGRESS.md): current implementation status.
-- [docs/DECISIONS.md](docs/DECISIONS.md): append-only decision history.
-- [docs/RUN_TESTS.md](docs/RUN_TESTS.md): commands and test scope.
-- [docs/EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md): four-tier live evaluation results.
-- [backend/eval/README.md](backend/eval/README.md): evaluation usage.
-- [Codebase Review & Integration Report.md](<Codebase Review & Integration Report.md>):
-  historical integration work.
-- [Member2 changes report.MD](<Member2 changes report.MD>): data-pipeline
-  implementation notes.
+- Analysis describes the selected, cleaned reviews. It does not represent every
+  Yelp review or establish causal explanations for restaurant performance.
+- Root causes and expected impacts are generated hypotheses. Numeric improvement
+  estimates in the saved reports have not been validated against business data.
+- Business matching has no minimum acceptance score or restaurant-category
+  filter. A supplied business ID and name are not cross-validated by the API.
+- The Dashboard and Pipeline Monitor keep separate state. The monitor displays
+  stages by name and does not yet present a separate history for every retry or
+  all supervisor events.
+- The API has wildcard CORS, no authentication, and no rate limiting. `/health`
+  checks process availability only, not datasets, credentials, or model access.
+- Python dependency pinning, the missing judge rubrics, and automated CI remain
+  gaps in reproducibility.
